@@ -458,6 +458,10 @@ thead th {
   color: var(--text-primary);
 }
 
+.insight p + p {
+  margin-top: 6px;
+}
+
 .footer {
   margin-top: 24px;
   font-size: 0.8rem;

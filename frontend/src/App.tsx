@@ -4,6 +4,7 @@ import { CutoffPicker, DayPicker } from './components/Controls'
 import { Notice } from './components/ui'
 import { formatUkDateTime } from './lib/format'
 import { useLoad, useUrlState, type View } from './lib/hooks'
+import { AccuracyView } from './views/AccuracyView'
 import { DayView } from './views/DayView'
 
 const TABS: { view: View; label: string }[] = [
@@ -71,7 +72,7 @@ export default function App() {
       {url.view === 'day' ? (
         <DayView date={date} cutoff={cutoff} />
       ) : (
-        <Notice>Accuracy view at cut-off {cutoff} (coming next).</Notice>
+        <AccuracyView cutoff={cutoff} onSelectDay={(day) => setUrl({ view: 'day', date: day })} />
       )}
     </Shell>
   )
