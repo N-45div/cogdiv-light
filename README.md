@@ -16,6 +16,20 @@ Data: Elexon BMRS [FUELHH](https://bmrs.elexon.co.uk/api-documentation/endpoint/
 
 **Live app:** _link added after deploying to Vercel (see [Deploying](#deploying-to-vercel))_
 
+![Day-ahead view](docs/screenshots/day-ahead-view.png)
+
+### What January 2026 shows
+
+- At the 09:20 cut-off the desk had the **07:30 forecast run** every day, 16.5-39.5 hours ahead of delivery.
+- That forecast was off by **2,022 MW per hour on average** (18% of mean wind output), and by up to **4,154 MW in 9 hours out of 10**.
+- It ran **high in 85% of hours, by 1,746 MW on average**, even when made under an hour ahead. This is a consistent gap between the forecast and metered output (likely curtailment), so taken at face value it leaves the desk **short**.
+- Correcting for that typical offset cut the average error to **1,391 MW (−31%)**. The app shows this bias-adjusted expectation alongside the raw forecast.
+- Forecasts made under 6 hours ahead are **17% more accurate** than day-ahead ones: the value of intraday re-trading.
+
+Full method and caveats: [docs/DECISIONS.md](docs/DECISIONS.md) (A8, A10, A12).
+
+![Forecast accuracy view](docs/screenshots/accuracy-view.png)
+
 **Design decisions:** [docs/DECISIONS.md](docs/DECISIONS.md) explains every choice (analysis and engineering) and the trade-offs.
 
 ---
@@ -119,7 +133,9 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 ├── .github/workflows/
 │   ├── ci.yml                   Lint, type-check, test, build, Docker smoke test
 │   └── refresh-data.yml         Manual job that re-downloads the Elexon data snapshot
-├── docs/DECISIONS.md            Design decisions and trade-offs
+├── docs/
+│   ├── DECISIONS.md             Design decisions, data findings and trade-offs
+│   └── screenshots/             Screenshots of the two views (real January 2026 data)
 ├── requirements.txt             Points Vercel at backend/requirements.txt
 └── .python-version              Python 3.12 for Vercel, CI and local tools
 ```
