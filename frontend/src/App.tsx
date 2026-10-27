@@ -4,6 +4,7 @@ import { CutoffPicker, DayPicker } from './components/Controls'
 import { Notice } from './components/ui'
 import { formatUkDateTime } from './lib/format'
 import { useLoad, useUrlState, type View } from './lib/hooks'
+import { resolveSelection } from './lib/selection'
 import { AccuracyView } from './views/AccuracyView'
 import { DayView } from './views/DayView'
 
@@ -19,7 +20,7 @@ export default function App() {
   if (meta.error) {
     return (
       <Shell>
-        <Notice error>Could not reach the data service ({meta.error}). Please retry shortly.</Notice>
+        <Notice error>Could not load the wind data. {meta.error}</Notice>
       </Shell>
     )
   }
@@ -32,9 +33,8 @@ export default function App() {
   }
 
   const m = meta.data
-  const cutoff = url.cutoff ?? m.default_cutoff
-  const inScope = url.date && url.date >= m.delivery_first && url.date <= m.delivery_last
-  const date = inScope ? url.date! : m.delivery_first
+  // Malformed or out-of-scope URL values fall back to the defaults.
+  const { date, cutoff } = resolveSelection(url, m)
 
   return (
     <Shell

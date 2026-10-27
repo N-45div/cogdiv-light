@@ -71,6 +71,11 @@ export interface DayView {
     actual_energy_mwh: number | null
     peak_forecast_mw: number | null
     min_forecast_mw: number | null
+    // Coverage: daily totals are null unless the day is complete.
+    forecast_hours: number
+    expected_hours: number
+    actual_periods: number
+    expected_periods: number
     accuracy: ErrorSummary
   }
   band_note: string
