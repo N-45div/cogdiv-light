@@ -159,13 +159,22 @@ select {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   font-size: 0.8rem;
   color: var(--text-secondary);
 }
 
 .field-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  max-width: 100%;
+}
+
+.field select {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .field select,

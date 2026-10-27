@@ -2,8 +2,9 @@ import type { ReactNode } from 'react'
 import { api, type Meta } from './api'
 import { CutoffPicker, DayPicker } from './components/Controls'
 import { Notice } from './components/ui'
-import { formatDate, formatUkDateTime } from './lib/format'
+import { formatUkDateTime } from './lib/format'
 import { useLoad, useUrlState, type View } from './lib/hooks'
+import { DayView } from './views/DayView'
 
 const TABS: { view: View; label: string }[] = [
   { view: 'day', label: 'Day-ahead view' },
@@ -68,9 +69,7 @@ export default function App() {
         />
       </div>
       {url.view === 'day' ? (
-        <Notice>
-          Day-ahead view for {formatDate(date)} at cut-off {cutoff} (coming next).
-        </Notice>
+        <DayView date={date} cutoff={cutoff} />
       ) : (
         <Notice>Accuracy view at cut-off {cutoff} (coming next).</Notice>
       )}
