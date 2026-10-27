@@ -45,12 +45,21 @@ class ErrorSummary(BaseModel):
     max_under_forecast_mw: float | None = None
     mean_actual_mw: float | None = None
     nmae_pct: float | None = Field(None, description="MAE as % of mean actual wind output")
+    over_forecast_share_pct: float | None = Field(
+        None, description="% of hours where the forecast was above the actual"
+    )
+    debiased_mae_mw: float | None = Field(
+        None, description="Mean absolute error after removing the average bias"
+    )
 
 
 class DayPoint(BaseModel):
     time: datetime = Field(description="Start of the period (UTC)")
     actual_mw: float | None = None
     forecast_mw: float | None = None
+    expected_mw: float | None = Field(
+        None, description="Forecast adjusted by the median past error at this hour"
+    )
     low_mw: float | None = Field(None, description="Low wind case (10th percentile)")
     high_mw: float | None = Field(None, description="High wind case (90th percentile)")
     error_mw: float | None = None
@@ -75,6 +84,7 @@ class DecisionRun(BaseModel):
 
 class DaySummary(BaseModel):
     forecast_energy_mwh: float | None
+    expected_energy_mwh: float | None
     low_energy_mwh: float | None
     high_energy_mwh: float | None
     actual_energy_mwh: float | None
