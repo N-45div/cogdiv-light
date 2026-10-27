@@ -13,6 +13,7 @@ import {
   formatUkTime,
 } from '../lib/format'
 import { useLoad } from '../lib/hooks'
+import { STALE_FORECAST_HOURS, forecastAgeHours } from '../lib/selection'
 
 export function DayView(props: { date: string; cutoff: string }) {
   const { date, cutoff } = props
@@ -24,6 +25,7 @@ export function DayView(props: { date: string; cutoff: string }) {
 
   const d = day.data
   const laterCount = d.runs.filter((r) => r.after_cutoff).length
+  const ageHours = d.decision_run ? forecastAgeHours(d.cutoff_time, d.decision_run.publish_time) : 0
 
   return (
     <div className={day.loading ? 'loading' : undefined} aria-busy={day.loading}>
@@ -36,6 +38,9 @@ export function DayView(props: { date: string; cutoff: string }) {
             <strong>{formatUkDateTime(d.decision_run.publish_time)}</strong>, covering{' '}
             {formatHours(d.decision_run.lead_hours_min)} to{' '}
             {formatHours(d.decision_run.lead_hours_max)} ahead.
+            {ageHours > STALE_FORECAST_HOURS && (
+              <strong> Note: it was already {formatHours(ageHours)} old at the cut-off, older than usual.</strong>
+            )}
           </>
         ) : (
           <>No wind forecast for this day had been published by the cut-off.</>
@@ -81,6 +86,8 @@ export function DayView(props: { date: string; cutoff: string }) {
 function DecisionTiles({ day }: { day: Day }) {
   const s = day.summary
   const acc = s.accuracy
+  const forecastComplete = s.forecast_hours >= s.expected_hours
+  const actualComplete = s.actual_periods >= s.expected_periods
   const energyError =
     s.forecast_energy_mwh !== null && s.actual_energy_mwh !== null
       ? s.forecast_energy_mwh - s.actual_energy_mwh
@@ -90,7 +97,11 @@ function DecisionTiles({ day }: { day: Day }) {
       <StatTile
         label="Forecast wind energy for the day"
         value={formatGWh(s.forecast_energy_mwh)}
-        note={`Hourly ${formatMW(s.min_forecast_mw)} to ${formatMW(s.peak_forecast_mw)}`}
+        note={
+          forecastComplete
+            ? `Hourly ${formatMW(s.min_forecast_mw)} to ${formatMW(s.peak_forecast_mw)}`
+            : `Forecast covers only ${s.forecast_hours} of ${s.expected_hours} hours`
+        }
       />
       <StatTile
         label="Expected after bias adjustment"
@@ -105,7 +116,13 @@ function DecisionTiles({ day }: { day: Day }) {
       <StatTile
         label="Outcome: actual wind energy"
         value={formatGWh(s.actual_energy_mwh)}
-        note={energyError === null ? 'Not yet known' : `Forecast ${energyError > 0 ? 'over' : 'under'} by ${formatGWh(Math.abs(energyError))}`}
+        note={
+          !actualComplete
+            ? `Incomplete data: ${s.actual_periods} of ${s.expected_periods} half-hours`
+            : energyError === null
+              ? 'Forecast total not available'
+              : `Forecast ${energyError > 0 ? 'over' : 'under'} by ${formatGWh(Math.abs(energyError))}`
+        }
         outcome
       />
       <StatTile
