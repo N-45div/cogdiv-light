@@ -21,6 +21,7 @@ Data: Elexon BMRS [FUELHH](https://bmrs.elexon.co.uk/api-documentation/endpoint/
 ### What January 2026 shows
 
 - At the 09:20 cut-off the desk had the **07:30 forecast run** every day, 16.5-39.5 hours ahead of delivery.
+- The app always scores **the forecast the desk actually had**, never a later one. Scoring the newest forecast instead would make the error look 17-18% smaller than it really was at decision time.
 - That forecast was off by **2,022 MW per hour on average** (18% of mean wind output), and by up to **4,154 MW in 9 hours out of 10**.
 - It ran **high in 85% of hours, by 1,746 MW on average**, even when made under an hour ahead. This is a consistent gap between the forecast and metered output (likely curtailment), so taken at face value it leaves the desk **short**.
 - Correcting for that typical offset cut the average error to **1,391 MW (−31%)**. The app shows this bias-adjusted expectation alongside the raw forecast.
