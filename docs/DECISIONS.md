@@ -70,6 +70,12 @@ why, and the trade-off accepted. Read top to bottom for a walkthrough of the des
 - **How well it works (Jan 2026, scored day by day):** the expected value cut the average hourly error from **2,022 MW to 1,391 MW (−31%)**. The 80% range contained the actual in **75%** of hours, so it is slightly too narrow, which is worth saying to the client.
 - **Trade-off / honesty note:** it still uses other January days, including later ones, so it is an evaluation tool, not a live forecast. A production version would use a rolling window of *past* days only. It also rests on ~30 samples per hour, so the percentiles are approximate.
 - **"Low-wind case" tile:** the sum of the hourly low cases. It is deliberately cautious, since not every hour will hit its low case on the same day.
+- **Minimum evidence:** an hour needs at least 10 past errors to get its own percentiles; otherwise the all-hours spread is used, and with fewer than 10 in total no range is shown. Percentiles from 2-3 values would look precise but mean nothing.
+
+### A8b. Daily totals only from complete days
+
+- **Decision:** daily energy (GWh) is reported only when every period of the delivery day is present (48 half-hours, or 46/50 on clock-change days). Otherwise the total is withheld and the UI says, for example, "47 of 48 half-hours".
+- **Why:** summing a day with gaps silently understates it. In a test with 6 hours missing, the "actual" total dropped from 254 to 182 GWh, which would make the forecast look badly wrong. Hourly errors are still scored wherever both values exist.
 
 ### A9. Accuracy vs lead time
 
@@ -117,7 +123,8 @@ The fetch script prints a profile of what Elexon returns (`python backend/script
 - **Decision:** **(c)**, with live fetching as a fallback (`DATA_SOURCE=auto|snapshot|live`).
 - **Why:** January 2026 is in the past, so the data no longer changes. A snapshot means fast serverless cold starts, no Elexon dependency during a client demo, reproducible numbers, and no database to run. The `Refresh data snapshot` GitHub Actions workflow re-downloads it on demand. It runs on GitHub's servers, which also meant the data could be fetched while the development sandbox had no access to Elexon.
 - **Trade-off:** a "live" product covering future months would move to (b), with a scheduled job and a small database. The code is ready for that: only `store.py` changes.
-- **Resilience:** the Elexon client splits requests into 7-day chunks, retries 429/5xx with exponential backoff, and fails fast on other errors.
+- **Resilience:** the Elexon client splits requests into 7-day chunks, retries 429/5xx, network errors and unexpected bodies (e.g. an HTML maintenance page served with 200) with exponential backoff, and fails fast on other errors. It also checks the expected fields exist, so a renamed field gives a clear error rather than a crash deep in pandas.
+- **Failure at runtime:** if the data cannot be loaded, the API answers **503** with a readable message (not a bare 500). The failure is not cached anywhere, so the next request tries again.
 
 ### B4. Caching
 
@@ -150,8 +157,11 @@ The browser always calls `/api/...` on the same host: through Vite's proxy in de
 | Elexon client | HTTP mocked with `respx`: chunking, parameters, retries, parsing | `backend/tests/test_elexon.py` |
 | Snapshot store | Round-trip to disk, source selection | `backend/tests/test_store.py` |
 | API end to end | FastAPI test client on a known dataset, including input validation | `backend/tests/test_api.py` |
-| Frontend logic | Vitest for formatting (incl. BST) and insight calculations | `frontend/src/lib/*.test.ts` |
+| Frontend logic | Vitest for formatting (incl. BST), insight calculations and URL validation | `frontend/src/lib/*.test.ts` |
+| Frontend data loading | jsdom + Testing Library: stale responses ignored, previous data kept, URL and back button | `frontend/src/lib/hooks.test.tsx` |
 | Whole system | CI builds the Docker image, starts it and calls the site and API | `.github/workflows/ci.yml` |
+
+Every edge case and its test is listed in [ARCHITECTURE.md § 12](ARCHITECTURE.md#12-edge-cases).
 
 ### B9. Docker
 
