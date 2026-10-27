@@ -1,0 +1,17 @@
+[project]
+name = "wind-monitor"
+version = "0.1.0"
+description = "Day-ahead wind forecast monitor for GB (Elexon BMRS data)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F: errors, I: import order, B: likely bugs, UP: modern syntax, SIM: simplifications
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
