@@ -37,12 +37,15 @@ export interface ErrorSummary {
   max_under_forecast_mw?: number | null
   mean_actual_mw?: number | null
   nmae_pct?: number | null
+  over_forecast_share_pct?: number | null // % of hours the forecast was too high
+  debiased_mae_mw?: number | null // error left after removing the average offset
 }
 
 export interface DayPoint {
   time: string
   actual_mw: number | null
   forecast_mw: number | null
+  expected_mw: number | null // forecast adjusted by its typical (median) error
   low_mw: number | null
   high_mw: number | null
   error_mw: number | null
@@ -62,6 +65,7 @@ export interface DayView {
   decision_run: { publish_time: string; lead_hours_min: number; lead_hours_max: number } | null
   summary: {
     forecast_energy_mwh: number | null
+    expected_energy_mwh: number | null
     low_energy_mwh: number | null
     high_energy_mwh: number | null
     actual_energy_mwh: number | null

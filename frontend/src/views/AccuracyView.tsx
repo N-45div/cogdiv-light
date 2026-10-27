@@ -34,7 +34,11 @@ export function AccuracyView(props: { cutoff: string; onSelectDay: (date: string
           note={`${formatPct(s.nmae_pct)} of average wind output (${formatMW(s.mean_actual_mw)})`}
         />
         <StatTile label="9 in 10 hours, error within" value={formatMW(s.p90_abs_error_mw)} note="90th percentile of absolute error" />
-        <StatTile label="Bias (mean error)" value={formatSignedMW(s.bias_mw)} note={biasNote(s.bias_mw, s.mae_mw)} />
+        <StatTile
+          label="Bias (mean error)"
+          value={formatSignedMW(s.bias_mw)}
+          note={`${biasNote(s.bias_mw, s.mae_mw)} (too high in ${formatPct(s.over_forecast_share_pct, 0)} of hours)`}
+        />
         <StatTile label="RMSE" value={formatMW(s.rmse_mw)} note="Weights large misses more heavily" />
         <StatTile
           label="Largest single-hour miss"
@@ -75,10 +79,14 @@ export function AccuracyView(props: { cutoff: string; onSelectDay: (date: string
 
         <Card
           title="Accuracy vs forecast lead time"
-          subtitle="Average error of every forecast run, by how many hours before delivery it was made."
+          subtitle="Every forecast run, by how many hours before delivery it was made."
           table={<LeadTable accuracy={a} />}
           foot={`Day-ahead decision forecasts were made ${formatHours(a.decision_lead_hours.min)} to ${formatHours(a.decision_lead_hours.max)} ahead.`}
         >
+          <div className="legend">
+            <LegendItem color="var(--series-forecast)" label="Average error (MAE)" />
+            <LegendItem color="var(--short)" label="Bias (forecast − actual)" />
+          </div>
           <LeadTimeChart byLead={a.by_lead_time} window={a.decision_lead_hours} />
         </Card>
       </div>
@@ -108,8 +116,30 @@ function biasNote(bias: number | null | undefined, mae: number | null | undefine
 function Insights({ accuracy }: { accuracy: Accuracy }) {
   const s = accuracy.summary
   const lead = compareLeadTimes(accuracy.by_lead_time, accuracy.decision_lead_hours)
+  const direction = biasDirection(s.bias_mw, s.mae_mw)
+  const nearest = accuracy.by_lead_time.find((l) => l.lead_hours === 0)
   return (
     <div className="insight">
+      {direction !== 'neutral' && (
+        <p>
+          <strong>
+            The forecast ran {direction === 'short' ? 'high' : 'low'}: by {formatSignedMW(s.bias_mw)} on average
+          </strong>
+          , and it was too {direction === 'short' ? 'high' : 'low'} in{' '}
+          {formatPct(direction === 'short' ? s.over_forecast_share_pct : 100 - (s.over_forecast_share_pct ?? 0), 0)} of
+          hours.
+          {nearest && biasDirection(nearest.bias_mw, nearest.mae_mw) === direction && (
+            <>
+              {' '}Even forecasts made under an hour ahead were off by {formatSignedMW(nearest.bias_mw)}, so this is a
+              consistent gap between the forecast and metered output, not just weather uncertainty (a likely cause is
+              wind farms being turned down for grid constraints in high wind).
+            </>
+          )}{' '}
+          Taken at face value, the forecast would have left the desk{' '}
+          <strong>{direction === 'short' ? 'short' : 'long'}</strong>. With the average offset removed, the remaining
+          error is {formatMW(s.debiased_mae_mw)} per hour.
+        </p>
+      )}
       <p>
         At the {accuracy.cutoff} cut-off the forecast was off by <strong>{formatMW(s.mae_mw)}</strong> per hour on
         average ({formatPct(s.nmae_pct)} of typical wind output), and within{' '}
