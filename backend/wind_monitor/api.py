@@ -161,6 +161,13 @@ def day_view(data: DataDep, delivery_date: date, cutoff: CutoffQuery = "09:20") 
 @router.get("/accuracy", response_model=AccuracyView)
 def accuracy_view(data: DataDep, cutoff: CutoffQuery = "09:20") -> dict:
     """How accurate the decision-time forecast was across all delivery days in scope."""
+    key = ("accuracy", cutoff)
+    if key not in data.cache:  # the data never changes, so compute once per cut-off
+        data.cache[key] = _accuracy(data, cutoff)
+    return data.cache[key]
+
+
+def _accuracy(data: WindData, cutoff: str) -> dict:
     errors = _month_errors(data, _parse_cutoff(cutoff))
     return {
         "cutoff": cutoff,

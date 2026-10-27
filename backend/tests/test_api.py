@@ -178,3 +178,11 @@ def test_day_reports_coverage_and_withholds_totals_from_partial_data(wind_data):
     assert summary["actual_energy_mwh"] is None
     assert (summary["forecast_hours"], summary["expected_hours"]) == (24, 24)
     assert summary["forecast_energy_mwh"] == pytest.approx(sum(10_300 + 100 * h for h in range(24)))
+
+
+def test_accuracy_is_computed_once_per_cutoff(client, wind_data):
+    first = client.get("/api/accuracy").json()
+    assert ("accuracy", "09:20") in wind_data.cache
+    assert client.get("/api/accuracy").json() == first
+    client.get("/api/accuracy", params={"cutoff": "15:00"})
+    assert ("accuracy", "15:00") in wind_data.cache
