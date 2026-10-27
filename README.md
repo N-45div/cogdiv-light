@@ -1,0 +1,150 @@
+# Wind Forecast Monitor
+
+A web app for a UK energy supplier's **day-ahead trading desk**. It answers two questions for
+purchase decisions made in **January 2026**:
+
+1. **What wind forecast did we have when we had to buy?** For each delivery day it shows the latest
+   national wind generation forecast published before the day-ahead auction closed (09:20 UK
+   time the day before, adjustable), with an 80% range from past forecast errors.
+2. **How much can we trust it?** It measures the forecast against actual generation: average error,
+   the margin that covers 9 hours in 10, whether it tends to leave the desk short or long, and how
+   accuracy improves with fresher forecasts.
+
+Data: Elexon BMRS [FUELHH](https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/FUELHH/stream)
+(actual wind, half-hourly) and [WINDFOR](https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/WINDFOR/stream)
+(wind forecasts).
+
+**Live app:** _link added after deploying to Vercel (see [Deploying](#deploying-to-vercel))_
+
+**Design decisions:** [docs/DECISIONS.md](docs/DECISIONS.md) explains every choice (analysis and engineering) and the trade-offs.
+
+---
+
+## Running it
+
+### Option 1: Docker (one command)
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:8000. The API docs are at http://localhost:8000/api/docs.
+
+### Option 2: Docker with hot reload (for development)
+
+```bash
+docker compose -f docker-compose.dev.yml up
+```
+
+The React dev server runs at http://localhost:5173 and the API at http://localhost:8000.
+
+### Option 3: Without Docker
+
+Requires Python 3.12+ and Node 22+.
+
+```bash
+# Backend (terminal 1)
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+uvicorn wind_monitor.main:app --reload            # http://localhost:8000
+
+# Frontend (terminal 2)
+cd frontend
+npm ci
+npm run dev                                         # http://localhost:5173
+```
+
+### Tests and checks
+
+```bash
+cd backend  && ruff check . && ruff format --check . && pytest
+cd frontend && npm run lint && npm run typecheck && npm test && npm run build
+```
+
+CI runs all of these, then builds the Docker image and smoke-tests it (`.github/workflows/ci.yml`).
+
+### Refreshing the data
+
+The app serves a snapshot of the January 2026 data committed in `backend/data/`. That data is
+historical, so it no longer changes. To re-download it:
+
+- **On GitHub:** Actions tab → *Refresh data snapshot* → *Run workflow*. It commits the new snapshot.
+- **Locally:** `python backend/scripts/fetch_snapshot.py` (also prints a profile of the data).
+
+Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATA_SOURCE` | `auto` | `auto` (snapshot if present, else live), `snapshot`, or `live` |
+| `SNAPSHOT_DIR` | `backend/data` | Where the snapshot CSVs live |
+| `STATIC_DIR` | unset | Folder of the built React app to serve (set in Docker) |
+| `ELEXON_BASE_URL` | `https://data.elexon.co.uk/bmrs/api/v1` | Elexon API base URL |
+
+---
+
+## Files and directories
+
+```
+.
+├── backend/                     Python API (FastAPI)
+│   ├── wind_monitor/
+│   │   ├── config.py            Business rules: study window, auction cut-offs, time zone; env settings
+│   │   ├── elexon.py            Elexon client (chunking, retries) + conversion to tidy tables
+│   │   ├── store.py             Where data comes from: committed snapshot or live Elexon; in-memory cache
+│   │   ├── analysis.py          Core logic: forecast available at the cut-off, errors, metrics, 80% band
+│   │   ├── schemas.py           API response models (the contract, shown at /api/docs)
+│   │   ├── api.py               HTTP routes: /api/meta, /api/day, /api/accuracy, /api/health
+│   │   └── main.py              App setup: routes, CDN cache headers, serving the built React app
+│   ├── scripts/fetch_snapshot.py  Downloads the data from Elexon and prints a data profile
+│   ├── data/                    The committed data snapshot (CSV + metadata)
+│   ├── tests/                   pytest: analysis rules, Elexon client, store, API end to end
+│   ├── requirements.txt         Pinned runtime dependencies
+│   ├── requirements-dev.txt     + test and lint tools
+│   └── pyproject.toml           Ruff and pytest settings
+├── frontend/                    React + TypeScript app (Vite)
+│   └── src/
+│       ├── App.tsx              Layout, tabs, shared controls (delivery day, cut-off)
+│       ├── api.ts               Typed API client mirroring backend/schemas.py
+│       ├── views/               DayView (day-ahead decision) and AccuracyView (forecast accuracy)
+│       ├── charts/              Recharts charts for each view
+│       ├── components/          Stat tiles, chart cards with table view, controls
+│       ├── lib/                 Formatting (UK time), CSV export, data hooks, insight maths (+ tests)
+│       └── index.css            Design tokens (light/dark) and layout
+├── api/index.py                 Vercel entry point: exposes the FastAPI app as a serverless function
+├── vercel.json                  Vercel build and routing (/api/* → Python, everything else → React)
+├── Dockerfile                   Multi-stage image: build React, then serve API + site with Python
+├── docker-compose.yml           Run the production image locally
+├── docker-compose.dev.yml       Hot-reload development setup
+├── .github/workflows/
+│   ├── ci.yml                   Lint, type-check, test, build, Docker smoke test
+│   └── refresh-data.yml         Manual job that re-downloads the Elexon data snapshot
+├── docs/DECISIONS.md            Design decisions and trade-offs
+├── requirements.txt             Points Vercel at backend/requirements.txt
+└── .python-version              Python 3.12 for Vercel, CI and local tools
+```
+
+## API
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/meta` | Scope (decision and delivery dates), cut-off presets, data provenance |
+| `GET /api/day?delivery_date=2026-01-15&cutoff=09:20` | The forecast used for that day, its 80% range, actuals, errors, and every forecast run around the decision |
+| `GET /api/accuracy?cutoff=09:20` | Error summary, by delivery day, by hour, by lead time, and a histogram |
+| `GET /api/health` | Liveness check |
+
+Interactive documentation: `/api/docs`.
+
+## Deploying to Vercel
+
+1. Import this GitHub repository at https://vercel.com/new.
+2. Keep the defaults. `vercel.json` sets the build (`frontend/` with Vite), the output directory, and
+   the Python function (`api/index.py`, dependencies from `requirements.txt`).
+3. Deploy. The site is served from Vercel's CDN, and `/api/*` runs FastAPI.
+
+## Use of AI tools
+
+This project was built with the help of **Claude Code** (Anthropic) as an AI pair programmer. It
+was used to research the domain (Elexon datasets, GB day-ahead auction times), scaffold the
+project, write code, tests and documentation, and review the design. The design decisions and
+trade-offs are written up in [docs/DECISIONS.md](docs/DECISIONS.md).
