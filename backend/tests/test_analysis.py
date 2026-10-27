@@ -133,11 +133,34 @@ def test_error_summary_of_nothing():
     assert an.error_summary(pd.Series(dtype=float), pd.Series(dtype=float)) == {"n": 0}
 
 
-def test_energy_uses_the_data_resolution():
+def test_day_energy_at_both_resolutions():
     half_hourly = pd.Series(pd.date_range("2026-01-15", periods=48, freq="30min", tz="UTC"))
     hourly = pd.Series(pd.date_range("2026-01-15", periods=24, freq="h", tz="UTC"))
-    assert an.energy_mwh(half_hourly, pd.Series([1000.0] * 48)) == 24000
-    assert an.energy_mwh(hourly, pd.Series([1000.0] * 24)) == 24000
+    assert an.day_energy_mwh(half_hourly, pd.Series([1000.0] * 48), DAY, an.HALF_HOUR) == 24000
+    assert an.day_energy_mwh(hourly, pd.Series([1000.0] * 24), DAY, an.HOUR) == 24000
+
+
+def test_day_energy_is_withheld_when_any_period_is_missing():
+    times = pd.Series(pd.date_range("2026-01-15", periods=48, freq="30min", tz="UTC"))
+    values = pd.Series([1000.0] * 48)
+    assert an.day_energy_mwh(times[:-1], values[:-1], DAY, an.HALF_HOUR) is None
+    values[5] = float("nan")
+    assert an.day_energy_mwh(times, values, DAY, an.HALF_HOUR) is None
+
+
+def test_day_energy_on_a_23_hour_clock_change_day():
+    spring = date(2026, 3, 29)
+    assert an.expected_periods(spring, an.HALF_HOUR) == 46
+    times = pd.Series(pd.date_range("2026-03-29", periods=46, freq="30min", tz="UTC"))
+    assert an.day_energy_mwh(times, pd.Series([1000.0] * 46), spring, an.HALF_HOUR) == 23000
+
+
+def test_decision_errors_with_no_days_is_an_empty_table():
+    fc = forecasts([("2026-01-14T08:30", "2026-01-15T10:00", 2000)])
+    act = actuals([("2026-01-15T10:00", 1500)])
+    errors = an.decision_errors(fc, act, [], CUTOFF)
+    assert errors.empty
+    assert {"delivery_date", "error_mw", "lead_hours", "hour"} <= set(errors.columns)
 
 
 def test_histogram_counts_every_error():
@@ -171,14 +194,36 @@ def test_band_low_case_uses_high_error_quantile_and_is_clipped_at_zero():
     assert banded["high_mw"].iloc[0] == pytest.approx(400)  # 500 - 100
 
 
-def test_band_falls_back_to_all_hours_when_hour_has_no_history():
-    history = pd.DataFrame({"hour": [3, 3], "error_mw": [-100.0, 100.0]})
-    day = pd.DataFrame(
-        {"start_time": [ts("2026-01-15T10:00")], "forecast_mw": [5000.0], "publish_time": [None]}
+def _day_at_ten(forecast_mw: float) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "start_time": [ts("2026-01-15T10:00")],
+            "forecast_mw": [forecast_mw],
+            "publish_time": [None],
+        }
     )
-    banded = an.add_uncertainty_band(day, history)
-    assert banded["low_mw"].iloc[0] == pytest.approx(5000 - 80)
-    assert banded["high_mw"].iloc[0] == pytest.approx(5000 + 80)
+
+
+def test_band_falls_back_to_all_hours_when_hour_has_no_history():
+    history = pd.DataFrame({"hour": [3] * 10, "error_mw": [-100.0, 100.0] * 5})
+    banded = an.add_uncertainty_band(_day_at_ten(5000.0), history)
+    assert banded["low_mw"].iloc[0] == pytest.approx(5000 - 100)
+    assert banded["high_mw"].iloc[0] == pytest.approx(5000 + 100)
+
+
+def test_band_ignores_an_hour_with_too_few_samples():
+    # Hour 10 has only 2 (extreme) errors, so the all-hours spread is used instead.
+    history = pd.DataFrame({"hour": [3] * 10 + [10, 10], "error_mw": [0.0] * 10 + [4000.0, 5000.0]})
+    overall = history["error_mw"].quantile([0.1, 0.5, 0.9]).to_numpy()
+    banded = an.add_uncertainty_band(_day_at_ten(8000.0), history)
+    assert banded["expected_mw"].iloc[0] == pytest.approx(8000 - overall[1])
+    assert banded["low_mw"].iloc[0] == pytest.approx(8000 - overall[2])
+
+
+def test_no_band_from_too_little_history():
+    history = pd.DataFrame({"hour": [10, 10], "error_mw": [0.0, 100.0]})
+    banded = an.add_uncertainty_band(_day_at_ten(8000.0), history)
+    assert banded[["expected_mw", "low_mw", "high_mw"]].isna().all(axis=None)
 
 
 # ---- lead time and runs -----------------------------------------------------------------

@@ -121,11 +121,19 @@ def day_view(data: DataDep, delivery_date: date, cutoff: CutoffQuery = "09:20") 
         "cutoff_time": an.decision_cutoff(delivery_date, cut).to_pydatetime(),
         "decision_run": decision_run,
         "summary": {
-            "forecast_energy_mwh": an.energy_mwh(forecast["start_time"], forecast["forecast_mw"]),
-            "expected_energy_mwh": an.energy_mwh(forecast["start_time"], forecast["expected_mw"]),
-            "low_energy_mwh": an.energy_mwh(forecast["start_time"], forecast["low_mw"]),
-            "high_energy_mwh": an.energy_mwh(forecast["start_time"], forecast["high_mw"]),
-            "actual_energy_mwh": an.energy_mwh(actual["start_time"], actual["actual_mw"]),
+            **{
+                f"{name}_energy_mwh": an.day_energy_mwh(
+                    forecast["start_time"], forecast[f"{name}_mw"], delivery_date, an.HOUR
+                )
+                for name in ("forecast", "expected", "low", "high")
+            },
+            "actual_energy_mwh": an.day_energy_mwh(
+                actual["start_time"], actual["actual_mw"], delivery_date, an.HALF_HOUR
+            ),
+            "forecast_hours": int(forecast["forecast_mw"].notna().sum()),
+            "expected_hours": an.expected_periods(delivery_date, an.HOUR),
+            "actual_periods": int(actual["actual_mw"].notna().sum()),
+            "expected_periods": an.expected_periods(delivery_date, an.HALF_HOUR),
             "peak_forecast_mw": an._num(forecast["forecast_mw"].max()),
             "min_forecast_mw": an._num(forecast["forecast_mw"].min()),
             "accuracy": an.error_summary(day_errors["error_mw"], day_errors["actual_mw"]),
