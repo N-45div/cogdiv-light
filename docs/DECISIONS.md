@@ -59,10 +59,15 @@ why, and the trade-off accepted. Read top to bottom for a walkthrough of the des
 - **Rejected: MAPE** (mean absolute percentage error). Wind can drop close to zero, and dividing by near-zero actuals makes MAPE explode and mislead.
 - **Code:** `analysis.error_summary`, `error_by_day`, `error_by_hour`, `error_histogram`.
 
-### A8. The 80% range around the forecast
+### A8. Expected value and likely range of the actual
 
-- **Decision:** the band is the **10th to 90th percentile of past decision-forecast errors at the same hour of day**, taken from the *other* delivery days (leave-one-day-out), then subtracted from the forecast. It is clipped at 0 MW, because wind output can't be negative.
-- **Why:** it is empirical, so it makes no assumption about error shape. Grouping by hour of day captures that later hours are forecast further ahead and are less certain. Excluding the day itself stops the band being built from the outcome it is meant to bracket.
+- **Decision:** for each hour, take the past decision-forecast errors at the same hour of day from the *other* delivery days (leave-one-day-out). Then:
+  - **expected** = forecast − median error (the forecast corrected for its typical bias)
+  - **likely range (80%)** = forecast − 90th percentile error … forecast − 10th percentile error
+
+  Values are clipped at 0 MW, because wind output can't be negative.
+- **Why:** it is empirical, so it makes no assumption about error shape, and it corrects the large systematic offset found in the data (A12). Grouping by hour of day captures that later hours are forecast further ahead and are less certain. Excluding the day itself stops the range being built from the outcome it brackets.
+- **How well it works (Jan 2026, scored day by day):** the expected value cut the average hourly error from **2,022 MW to 1,391 MW (−31%)**. The 80% range contained the actual in **75%** of hours, so it is slightly too narrow, which is worth saying to the client.
 - **Trade-off / honesty note:** it still uses other January days, including later ones, so it is an evaluation tool, not a live forecast. A production version would use a rolling window of *past* days only. It also rests on ~30 samples per hour, so the percentiles are approximate.
 - **"Low-wind case" tile:** the sum of the hourly low cases. It is deliberately cautious, since not every hour will hit its low case on the same day.
 
@@ -71,11 +76,26 @@ why, and the trade-off accepted. Read top to bottom for a walkthrough of the des
 - **Decision:** score **every** forecast run against actuals, bucketed by how many hours before delivery it was made (0-48 h), and shade the lead times used for day-ahead decisions.
 - **Why:** this shows the cost of committing a day early, and the size of the opportunity for intraday re-trading.
 
-### A10. Data definitions and caveats
+### A10. Checking assumptions against the real data
+
+The fetch script prints a profile of what Elexon returns (`python backend/scripts/fetch_snapshot.py`, or the *Refresh data snapshot* workflow log). For January 2026 it confirmed:
+
+- Actuals are complete: 1,536 half-hours (32 days × 48).
+- WINDFOR is **hourly**, published **8 times a day** (02:30, 04:30, 07:30, 09:30, 11:30, 15:30, 18:30, 22:30 UTC), and each run covers ~47-67 hours ahead.
+- Each run also contains 5-25 hours **before** its publish time (back-filled values). They are excluded from the "later forecasts" overlay and from the lead-time analysis (lead < 0), since they are not forecasts.
+- At the 09:20 cut-off the desk had the **07:30 run** every day (16.5-39.5 hours ahead). The 09:30 run arrives 10 minutes after EPEX closes but before N2EX's 09:50, and improves the average error by only ~1% (2,022 → 1,996 MW).
+
+### A11. Data definitions and caveats
 
 - Actuals: Elexon **FUELHH** with `fuelType=WIND`, using `startTime` and `generation` (MW). If an actual is re-published, the latest publication is kept.
 - Forecasts: Elexon **WINDFOR**, using `publishTime`, `startTime` and `generation` (MW).
 - Both cover **transmission-metered wind**. Wind embedded in distribution networks is not in FUELHH (it shows up as lower demand), so national wind output is higher than shown here. This matches the brief ("Elexon data alone").
+
+### A12. Finding: the forecast runs well above metered output
+
+- **What the data shows:** the decision-time forecast was **1,746 MW above actual on average**, too high in **85%** of hours. The offset stays at ~1,450 MW even for forecasts made **under an hour ahead**, and for back-filled hours already past when the run was published. It grows with wind level (~2,700 MW when over 15 GW is forecast).
+- **Interpretation:** this is a consistent gap between what WINDFOR forecasts and what FUELHH records, not weather-forecast uncertainty. The most likely cause is **curtailment**: in high wind, wind farms are paid to turn down because of grid constraints, so metered output is below what the wind allows. A difference in which wind farms each dataset covers would look similar. Both are hypotheses to confirm with Elexon/NESO; the app states this cautiously.
+- **What it means for the desk:** buying against the raw forecast would have left them **short** most hours. With the average offset removed, the remaining error is ~1,376 MW per hour. Hence the bias-adjusted expectation (A8) and the bias line on the lead-time chart.
 
 ---
 
@@ -95,7 +115,7 @@ why, and the trade-off accepted. Read top to bottom for a walkthrough of the des
 
 - **Options:** (a) call Elexon on every request, (b) a database refreshed on a schedule, (c) a snapshot file committed to the repo.
 - **Decision:** **(c)**, with live fetching as a fallback (`DATA_SOURCE=auto|snapshot|live`).
-- **Why:** January 2026 is in the past, so the data no longer changes. A snapshot means fast serverless cold starts, no Elexon dependency during a client demo, reproducible numbers, and no database to run. The `Refresh data snapshot` GitHub Actions workflow re-downloads it on demand.
+- **Why:** January 2026 is in the past, so the data no longer changes. A snapshot means fast serverless cold starts, no Elexon dependency during a client demo, reproducible numbers, and no database to run. The `Refresh data snapshot` GitHub Actions workflow re-downloads it on demand. It runs on GitHub's servers, which also meant the data could be fetched while the development sandbox had no access to Elexon.
 - **Trade-off:** a "live" product covering future months would move to (b), with a scheduled job and a small database. The code is ready for that: only `store.py` changes.
 - **Resilience:** the Elexon client splits requests into 7-day chunks, retries 429/5xx with exponential backoff, and fails fast on other errors.
 
@@ -154,7 +174,7 @@ A multi-stage build: Node builds the React app, then a `python:3.12-slim` image 
 
 ## What I would do next
 
-1. Build the uncertainty band from a rolling window of *past* days only, and check its calibration (does the 80% range contain ~80% of outcomes?).
+1. Build the expected value and range from a rolling window of *past* days only, and widen the range so it covers ~80% (it covered 75% in January). Condition the offset on wind level, since it grows in high wind.
 2. Add national demand forecasts (Elexon NDF) to turn "wind forecast" into "power still to buy = demand - wind", with ranges.
 3. Normalise errors by installed wind capacity, and extend beyond January with a scheduled refresh into a small database.
 4. Alerts when the latest run moves far from the run used for the decision.
