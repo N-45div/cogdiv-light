@@ -135,7 +135,7 @@ export function LeadTimeChart(props: { byLead: LeadTimeAccuracy[]; window: Accur
             tickFormatter={(h: number) => `${h} h`}
             stroke="var(--axis)"
           />
-          <YAxis width={64} stroke="var(--axis)" tickFormatter={mwTick} domain={[0, 'auto']} />
+          <YAxis width={64} stroke="var(--axis)" tickFormatter={mwTick} domain={[(min: number) => Math.min(0, min), 'auto']} />
           {min !== null && max !== null && (
             <ReferenceArea
               x1={Math.floor(min)}
@@ -145,8 +145,10 @@ export function LeadTimeChart(props: { byLead: LeadTimeAccuracy[]; window: Accur
               label={{ value: 'Day-ahead decisions', position: 'insideTop', fill: 'var(--text-secondary)', fontSize: 12 }}
             />
           )}
+          <ReferenceLine y={0} stroke="var(--axis)" />
           <Tooltip content={LeadTooltip} />
           <Line dataKey="mae_mw" stroke="var(--series-forecast)" strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Line dataKey="bias_mw" stroke="var(--short)" strokeWidth={2} dot={false} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>

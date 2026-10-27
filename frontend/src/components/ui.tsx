@@ -48,10 +48,12 @@ export function Card(props: {
   )
 }
 
-export function LegendItem(props: { color: string; label: string; area?: boolean }) {
+export function LegendItem(props: { color: string; label: string; area?: boolean; dashed?: boolean }) {
+  const kind = props.area ? 'swatch area' : props.dashed ? 'swatch dashed' : 'swatch'
+  const style = props.dashed ? { color: props.color } : { background: props.color }
   return (
     <span>
-      <i className={props.area ? 'swatch area' : 'swatch'} style={{ background: props.color }} />
+      <i className={kind} style={style} />
       {props.label}
     </span>
   )

@@ -16,6 +16,7 @@ import { formatMW, formatSignedMW, formatUkTime } from '../lib/format'
 interface Row {
   t: number
   forecast: number | null
+  expected: number | null
   actual: number | null
   band: [number, number] | null
   error: number | null
@@ -27,6 +28,7 @@ export function DayChart(props: { day: DayView; showLaterRuns: boolean }) {
   const rows: Row[] = props.day.points.map((p) => ({
     t: Date.parse(p.time),
     forecast: p.forecast_mw,
+    expected: p.expected_mw,
     actual: p.actual_mw,
     band: p.low_mw !== null && p.high_mw !== null ? [p.low_mw, p.high_mw] : null,
     error: p.error_mw,
@@ -90,6 +92,15 @@ export function DayChart(props: { day: DayView; showLaterRuns: boolean }) {
             isAnimationActive={false}
           />
           <Line
+            dataKey="expected"
+            stroke="var(--series-forecast)"
+            strokeWidth={2}
+            strokeDasharray="5 4"
+            dot={false}
+            connectNulls
+            isAnimationActive={false}
+          />
+          <Line
             dataKey="actual"
             stroke="var(--series-actual)"
             strokeWidth={2}
@@ -109,7 +120,8 @@ function DayTooltip({ active, payload }: TooltipContentProps) {
   if (!active || !row) return null
   const rows: [string, string][] = []
   if (row.forecast !== null) rows.push(['Forecast', formatMW(row.forecast)])
-  if (row.band) rows.push(['80% range', `${formatMW(row.band[0])} – ${formatMW(row.band[1])}`])
+  if (row.expected !== null) rows.push(['Expected (bias-adjusted)', formatMW(row.expected)])
+  if (row.band) rows.push(['Likely range (80%)', `${formatMW(row.band[0])} – ${formatMW(row.band[1])}`])
   if (row.actual !== null) rows.push(['Actual', formatMW(row.actual)])
   if (row.error !== null) rows.push(['Error (forecast − actual)', formatSignedMW(row.error)])
   return <TooltipBox title={formatUkTime(row.t)} rows={rows} />

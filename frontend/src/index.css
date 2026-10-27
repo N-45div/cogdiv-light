@@ -336,6 +336,10 @@ select {
   height: 10px;
 }
 
+.swatch.dashed {
+  background: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 8px);
+}
+
 .toggle {
   display: inline-flex;
   align-items: center;

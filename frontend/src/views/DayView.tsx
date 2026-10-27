@@ -57,7 +57,8 @@ export function DayView(props: { date: string; cutoff: string }) {
       >
         <div className="legend">
           <LegendItem color="var(--series-forecast)" label="Forecast used for the decision" />
-          <LegendItem color="var(--band)" label="80% range" area />
+          <LegendItem color="var(--series-forecast)" label="Expected (adjusted for typical bias)" dashed />
+          <LegendItem color="var(--band)" label="Likely range of actual (80%)" area />
           <LegendItem color="var(--series-actual)" label="Actual generation" />
           {showLaterRuns && <LegendItem color="var(--run-other)" label="Forecasts published after the cut-off" />}
         </div>
@@ -89,7 +90,12 @@ function DecisionTiles({ day }: { day: Day }) {
       <StatTile
         label="Forecast wind energy for the day"
         value={formatGWh(s.forecast_energy_mwh)}
-        note={`Range ${formatMW(s.min_forecast_mw)} to ${formatMW(s.peak_forecast_mw)}`}
+        note={`Hourly ${formatMW(s.min_forecast_mw)} to ${formatMW(s.peak_forecast_mw)}`}
+      />
+      <StatTile
+        label="Expected after bias adjustment"
+        value={formatGWh(s.expected_energy_mwh)}
+        note="Forecast minus its typical error at each hour"
       />
       <StatTile
         label="Low-wind case (cautious plan)"
@@ -119,6 +125,7 @@ function DayTable({ day }: { day: Day }) {
         <tr>
           <th>Time (UK)</th>
           <th>Forecast</th>
+          <th>Expected</th>
           <th>Low (P10)</th>
           <th>High (P90)</th>
           <th>Actual</th>
@@ -130,6 +137,7 @@ function DayTable({ day }: { day: Day }) {
           <tr key={p.time}>
             <td>{formatUkTime(p.time)}</td>
             <td>{formatMW(p.forecast_mw)}</td>
+            <td>{formatMW(p.expected_mw)}</td>
             <td>{formatMW(p.low_mw)}</td>
             <td>{formatMW(p.high_mw)}</td>
             <td>{formatMW(p.actual_mw)}</td>
@@ -143,11 +151,12 @@ function DayTable({ day }: { day: Day }) {
 
 function dayCsv(day: Day): string {
   return toCsv(
-    ['time_utc', 'time_uk', 'forecast_mw', 'low_p10_mw', 'high_p90_mw', 'actual_mw', 'error_mw', 'forecast_published_utc'],
+    ['time_utc', 'time_uk', 'forecast_mw', 'expected_mw', 'low_p10_mw', 'high_p90_mw', 'actual_mw', 'error_mw', 'forecast_published_utc'],
     day.points.map((p) => [
       p.time,
       formatUkTime(p.time),
       p.forecast_mw,
+      p.expected_mw,
       p.low_mw,
       p.high_mw,
       p.actual_mw,
