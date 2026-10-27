@@ -199,3 +199,14 @@ def test_runs_for_day_flags_runs_after_cutoff():
     runs = an.runs_for_day(fc, DAY, CUTOFF)
     assert [r["after_cutoff"] for r in runs] == [False, True]
     assert runs[1]["points"][0]["forecast_mw"] == 2500
+
+
+def test_runs_for_day_drop_hours_already_past_at_publication():
+    fc = forecasts(
+        [
+            ("2026-01-15T12:30", "2026-01-15T10:00", 900),  # backfilled past hour
+            ("2026-01-15T12:30", "2026-01-15T13:00", 950),
+        ]
+    )
+    runs = an.runs_for_day(fc, DAY, CUTOFF)
+    assert [p["forecast_mw"] for p in runs[0]["points"]] == [950]
