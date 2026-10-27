@@ -273,7 +273,9 @@ def runs_for_day(
 ) -> list[dict]:
     """Forecast runs covering the delivery day, from a day before the cutoff to delivery end.
 
-    Lets the desk see how the forecast moved before and after their decision.
+    Lets the desk see how the forecast moved before and after their decision. WINDFOR runs
+    also carry values for hours already past when published; those are not forecasts, so
+    only points at or after each run's publish time are kept.
     """
     start, end = delivery_window(delivery_day)
     cut = decision_cutoff(delivery_day, cutoff)
@@ -282,6 +284,7 @@ def runs_for_day(
         & (forecasts["start_time"] < end)
         & (forecasts["publish_time"] >= cut - pd.Timedelta(hours=lookback_hours))
         & (forecasts["publish_time"] < end)
+        & (forecasts["start_time"] >= forecasts["publish_time"])
     ]
     runs = []
     for publish_time, group in window.groupby("publish_time"):
