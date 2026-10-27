@@ -141,3 +141,20 @@ def test_network_errors_are_retried():
     )
     assert ElexonClient(BASE).fetch_wind_actuals(date(2026, 1, 1), date(2026, 1, 1)) == []
     assert route.call_count == 2
+
+
+def test_renamed_fields_raise_a_clear_error():
+    with pytest.raises(ElexonError, match="missing fields"):
+        forecasts_frame([{"publishTime": "2026-01-01T08:30:00Z", "start": "x", "generation": 1}])
+
+
+def test_rows_without_a_usable_generation_value_are_dropped():
+    rows = [
+        {"publishTime": "2026-01-01T08:30:00Z", "startTime": "2026-01-02T00:00:00Z",
+         "generation": None},
+        {"publishTime": "2026-01-01T08:30:00Z", "startTime": "2026-01-02T01:00:00Z",
+         "generation": "n/a"},
+        {"publishTime": "2026-01-01T08:30:00Z", "startTime": "2026-01-02T02:00:00Z",
+         "generation": 7000},
+    ]  # fmt: skip
+    assert forecasts_frame(rows)["generation_mw"].tolist() == [7000]

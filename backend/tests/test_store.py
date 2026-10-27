@@ -92,3 +92,13 @@ def test_failed_load_is_reported_and_not_cached(monkeypatch):
 
     monkeypatch.setattr(store, "load_wind_data", lambda s: _sample())
     assert get_wind_data().source == "live"
+
+
+def test_elexon_schema_change_is_reported_as_data_unavailable(monkeypatch):
+    def changed_schema(settings):
+        raise ElexonError("WINDFOR response is missing fields: ['publishTime']")
+
+    monkeypatch.setattr(store, "_cache", None)
+    monkeypatch.setattr(store, "load_wind_data", changed_schema)
+    with pytest.raises(DataUnavailableError, match="missing fields"):
+        get_wind_data()
