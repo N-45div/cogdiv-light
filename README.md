@@ -32,6 +32,8 @@ Full method and caveats: [docs/DECISIONS.md](docs/DECISIONS.md) (A8, A10, A12).
 
 **Design decisions:** [docs/DECISIONS.md](docs/DECISIONS.md) explains every choice (analysis and engineering) and the trade-offs.
 
+**Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has diagrams of the system, data pipeline, request flow and CI/CD, plus a table of every edge case and the test that covers it.
+
 ---
 
 ## Running it
@@ -134,6 +136,7 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 │   ├── ci.yml                   Lint, type-check, test, build, Docker smoke test
 │   └── refresh-data.yml         Manual job that re-downloads the Elexon data snapshot
 ├── docs/
+│   ├── ARCHITECTURE.md          Diagrams (Mermaid), caching, error handling, edge cases
 │   ├── DECISIONS.md             Design decisions, data findings and trade-offs
 │   └── screenshots/             Screenshots of the two views (real January 2026 data)
 ├── requirements.txt             Points Vercel at backend/requirements.txt
