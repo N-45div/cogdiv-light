@@ -19,6 +19,9 @@ import pandas as pd
 from .config import MAX_LEAD_HOURS, UK_TZ
 
 HOUR = pd.Timedelta(hours=1)
+HALF_HOUR = pd.Timedelta(minutes=30)
+# Below this many past errors, percentiles are too noisy to show.
+MIN_BAND_SAMPLES = 10
 # Likely range of the actual, from past errors: 10th-90th percentile (an 80% range), and the
 # median for the bias-adjusted "expected" value.
 BAND_LOW_Q = 0.10
@@ -88,6 +91,9 @@ def decision_errors(
         frame = decision_forecast(forecasts, day, cutoff)
         frame["delivery_date"] = day
         frames.append(frame)
+    if not frames:  # no days asked for: an empty table that still has the right columns
+        frames = [decision_forecast(forecasts.iloc[:0], date(2000, 1, 1), cutoff)]
+        frames[0]["delivery_date"] = pd.Series(dtype=object)
     joined = pd.concat(frames, ignore_index=True).merge(
         actuals.rename(columns={"generation_mw": "actual_mw"}), on="start_time", how="inner"
     )
@@ -134,13 +140,20 @@ def error_summary(errors: pd.Series, actuals: pd.Series) -> dict:
     }
 
 
-def energy_mwh(times: pd.Series, mw: pd.Series) -> float | None:
-    """Energy over a period from evenly spaced MW values (MW x hours per step)."""
-    if mw.isna().all():
+def expected_periods(day: date, step: pd.Timedelta) -> int:
+    """How many values a full delivery day has at this resolution (clock changes included)."""
+    start, end = delivery_window(day)
+    return int((end - start) / step)
+
+
+def day_energy_mwh(times: pd.Series, mw: pd.Series, day: date, step: pd.Timedelta) -> float | None:
+    """Energy for a whole delivery day from MW values every `step`, or None if any are missing.
+
+    A total built from partial data would silently understate the day, so we don't give one.
+    """
+    if times[mw.notna()].nunique() < expected_periods(day, step):
         return None
-    # A single point has no spacing to measure; assume the hourly forecast resolution.
-    step_hours = times.sort_values().diff().median() / HOUR if len(times) > 1 else 1.0
-    return _num(mw.sum() * step_hours)
+    return _num(mw.sum() * (step / HOUR))
 
 
 def error_by_hour(errors: pd.DataFrame) -> list[dict]:
@@ -176,9 +189,12 @@ def error_by_day(errors: pd.DataFrame, actuals: pd.DataFrame) -> list[dict]:
                 "mae_mw": _num(err.abs().mean()),
                 "bias_mw": _num(err.mean()),
                 "max_abs_error_mw": _num(err.abs().max()),
-                "forecast_energy_mwh": energy_mwh(group["start_time"], group["forecast_mw"]),
-                "actual_energy_mwh": energy_mwh(
-                    day_actuals["start_time"], day_actuals["generation_mw"]
+                # Forecast total over hours that also have an actual, so both sides match.
+                "forecast_energy_mwh": day_energy_mwh(
+                    group["start_time"], group["forecast_mw"], day, HOUR
+                ),
+                "actual_energy_mwh": day_energy_mwh(
+                    day_actuals["start_time"], day_actuals["generation_mw"], day, HALF_HOUR
                 ),
             }
         )
@@ -242,15 +258,19 @@ def error_by_lead_time(
 
 
 def error_quantiles_by_hour(errors: pd.DataFrame) -> pd.DataFrame:
-    """10th/50th/90th percentile of error for each hour of day (index: hour)."""
+    """10th/50th/90th percentile of error for each hour of day (index: hour).
+
+    Hours with fewer than MIN_BAND_SAMPLES errors are left out (callers fall back to all hours).
+    """
     grouped = errors.groupby("hour")["error_mw"]
-    return pd.DataFrame(
+    quantiles = pd.DataFrame(
         {
             "q_low": grouped.quantile(BAND_LOW_Q),
             "q_mid": grouped.quantile(BAND_MID_Q),
             "q_high": grouped.quantile(BAND_HIGH_Q),
         }
     )
+    return quantiles[grouped.size() >= MIN_BAND_SAMPLES]
 
 
 def add_uncertainty_band(day_forecast: pd.DataFrame, history: pd.DataFrame) -> pd.DataFrame:
@@ -261,10 +281,11 @@ def add_uncertainty_band(day_forecast: pd.DataFrame, history: pd.DataFrame) -> p
       low_mw      = forecast - 90th pct error (low wind case)
       high_mw     = forecast - 10th pct error (high wind case)
     `history` should exclude the day itself so the range is not built from its own outcome.
-    Wind output cannot be negative, so values are clipped at zero.
+    An hour with too few past errors uses all hours instead; with too little history overall
+    no range is given. Wind output cannot be negative, so values are clipped at zero.
     """
     out = day_forecast.copy()
-    if history.empty or out.empty:
+    if len(history) < MIN_BAND_SAMPLES or out.empty:
         for col in ("expected_mw", "low_mw", "high_mw"):
             out[col] = np.nan
         return out

@@ -162,3 +162,19 @@ def test_data_outage_returns_503_with_a_readable_message():
     assert response.status_code == 503
     assert "temporarily unavailable" in response.json()["detail"]
     assert "cache-control" not in response.headers  # errors must not be cached by the CDN
+
+
+def test_day_reports_coverage_and_withholds_totals_from_partial_data(wind_data):
+    gap = wind_data.actuals["start_time"] == pd.Timestamp("2026-01-03T10:30", tz="UTC")
+    partial = WindData(
+        wind_data.actuals[~gap], wind_data.forecasts, "snapshot", wind_data.retrieved_at
+    )
+    app = create_app(replace(Settings.from_env(), static_dir=None))
+    app.dependency_overrides[get_wind_data] = lambda: partial
+    summary = (
+        TestClient(app).get("/api/day", params={"delivery_date": "2026-01-03"}).json()["summary"]
+    )
+    assert (summary["actual_periods"], summary["expected_periods"]) == (47, 48)
+    assert summary["actual_energy_mwh"] is None
+    assert (summary["forecast_hours"], summary["expected_hours"]) == (24, 24)
+    assert summary["forecast_energy_mwh"] == pytest.approx(sum(10_300 + 100 * h for h in range(24)))

@@ -90,6 +90,11 @@ class DaySummary(BaseModel):
     actual_energy_mwh: float | None
     peak_forecast_mw: float | None
     min_forecast_mw: float | None
+    # Data coverage: daily energy totals are only given when the day is complete.
+    forecast_hours: int = Field(description="Hours of the day with a decision forecast")
+    expected_hours: int = Field(description="Hours in the delivery day (23-25 on clock changes)")
+    actual_periods: int = Field(description="Half-hours of the day with an actual value")
+    expected_periods: int = Field(description="Half-hours in the delivery day (46-50)")
     accuracy: ErrorSummary
 
 
