@@ -26,7 +26,10 @@ why, and the trade-off accepted. Read top to bottom for a walkthrough of the des
 - **Context:** WINDFOR is published several times a day. Each publication (a "run", identified by `publishTime`) forecasts the next ~2 days.
 - **Decision:** for each hour of the delivery day, use the **latest forecast published at or before the cut-off** that covers that hour.
 - **Why:** this is exactly what was knowable at decision time, with no look-ahead. Choosing per hour (rather than "the latest run, full stop") also copes with a run that only partly covers the day: older runs fill the gaps.
-- **Code:** `analysis.decision_forecast`. Tests in `tests/test_analysis.py` cover "after cut-off is ignored", "exactly at cut-off counts" and "older run fills gaps".
+- **Worked example (15 Jan delivery):** the cut-off is 09:20 on 14 Jan. Runs published at 02:30, 04:30 and 07:30 that morning were available; the 07:30 run is the latest, so it is used for every hour of the 15th. The 09:30 run is newer but arrived ten minutes after the auction closed, so it is excluded.
+- **The horizon is not fixed:** it depends on the hour. Midnight on D is forecast 16.5 hours ahead and 23:00 is forecast 39.5 hours ahead. That is the real horizon of a day-ahead decision, and every error is measured at it.
+- **Why it matters:** scoring the newest forecast instead (the common shortcut) makes January's error look **17-18% smaller** (MAE 1,658-1,680 MW instead of 2,022 MW). That would overstate how much the desk can rely on the forecast when it actually decides.
+- **Code:** `analysis.decision_forecast`. Tests in `tests/test_analysis.py` cover "after cut-off is ignored", "exactly at cut-off counts" and "older run fills gaps". `tests/test_real_data.py` re-implements the rule independently and checks it against the API for all 744 January hours; it fails if forecasts published even an hour late are allowed in.
 
 ### A4. What is a "delivery day"?
 
