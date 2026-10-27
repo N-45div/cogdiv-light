@@ -171,6 +171,13 @@ def test_histogram_counts_every_error():
     assert bins[-1]["upper_mw"] == 1500
 
 
+def test_histogram_when_every_error_is_the_same():
+    assert an.error_histogram(pd.Series([100.0, 100.0])) == [
+        {"lower_mw": 0.0, "upper_mw": 500.0, "count": 2}
+    ]
+    assert an.error_histogram(pd.Series(dtype=float)) == []
+
+
 def test_error_by_hour_groups_on_uk_hour():
     df = pd.DataFrame({"hour": [1, 1, 2], "error_mw": [100.0, -100.0, 50.0]})
     rows = an.error_by_hour(df)

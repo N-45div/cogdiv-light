@@ -151,12 +151,21 @@ def empty_frame(columns: list[str]) -> pd.DataFrame:
     )
 
 
+def _records(rows: list[dict[str, Any]], required: set[str], dataset: str) -> pd.DataFrame:
+    """Rows as a table, failing clearly if Elexon has changed its field names."""
+    df = pd.DataFrame(rows)
+    missing = required - set(df.columns)
+    if missing:
+        raise ElexonError(f"{dataset} response is missing fields: {sorted(missing)}")
+    return df
+
+
 def actuals_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     """Columns: start_time, generation_mw. One row per half-hour (latest publication wins)."""
     columns = ["start_time", "generation_mw"]
     if not rows:
         return empty_frame(columns)
-    df = pd.DataFrame(rows)
+    df = _records(rows, {"fuelType", "startTime", "publishTime", "generation"}, "FUELHH")
     df = df[df["fuelType"] == "WIND"]
     df = pd.DataFrame(
         {
@@ -175,7 +184,7 @@ def forecasts_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     columns = ["publish_time", "start_time", "generation_mw"]
     if not rows:
         return empty_frame(columns)
-    df = pd.DataFrame(rows)
+    df = _records(rows, {"startTime", "publishTime", "generation"}, "WINDFOR")
     df = pd.DataFrame(
         {
             "publish_time": to_utc(df["publishTime"]),
