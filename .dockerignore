@@ -1,0 +1,13 @@
+# Keep the build context small and free of local state.
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+frontend/dist
+backend/tests
+.vercel
+.env
+.env.*
+*.md

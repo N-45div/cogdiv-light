@@ -1,0 +1,12 @@
+# Run the whole app (API + website) the way it runs in production:
+#   docker compose up --build      ->  http://localhost:8000
+services:
+  app:
+    build: .
+    image: wind-monitor
+    ports:
+      - "8000:8000"
+    environment:
+      # auto: use the committed snapshot, or call Elexon live if there is none
+      DATA_SOURCE: ${DATA_SOURCE:-auto}
+    restart: unless-stopped
