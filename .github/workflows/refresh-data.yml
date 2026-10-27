@@ -1,0 +1,33 @@
+name: Refresh data snapshot
+
+# Run by hand from the Actions tab. Downloads the January 2026 wind data from Elexon,
+# prints a profile of it, and commits the snapshot the app serves (if it changed).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r backend/requirements.txt
+      - run: python backend/scripts/fetch_snapshot.py
+      - name: Commit the snapshot if it changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/data
+          if git diff --cached --quiet; then
+            echo "Snapshot unchanged"
+          else
+            git commit -m "Refresh Elexon wind data snapshot"
+            git push
+          fi
