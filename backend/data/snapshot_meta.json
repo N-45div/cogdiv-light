@@ -1,0 +1,6 @@
+{
+  "retrieved_at": "2026-10-27T14:06:25Z",
+  "actuals_rows": 1536,
+  "forecast_rows": 19856,
+  "source": "https://data.elexon.co.uk/bmrs/api/v1 (FUELHH fuelType=WIND, WINDFOR)"
+}
