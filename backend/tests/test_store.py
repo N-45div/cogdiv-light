@@ -5,7 +5,15 @@ import pandas as pd
 import pytest
 
 from wind_monitor import config, store
-from wind_monitor.store import WindData, load_snapshot, load_wind_data, save_snapshot
+from wind_monitor.elexon import ElexonError
+from wind_monitor.store import (
+    DataUnavailableError,
+    WindData,
+    get_wind_data,
+    load_snapshot,
+    load_wind_data,
+    save_snapshot,
+)
 
 
 def _settings(tmp_path, source="auto"):
@@ -66,3 +74,21 @@ def test_live_mode_ignores_snapshot(tmp_path, monkeypatch):
     save_snapshot(_sample(), tmp_path)
     monkeypatch.setattr(store, "fetch_live", lambda s: _sample())
     assert load_wind_data(_settings(tmp_path, source="live")).source == "live"
+
+
+def test_failed_load_is_reported_and_not_cached(monkeypatch):
+    calls = []
+
+    def failing(settings):
+        calls.append(1)
+        raise ElexonError("Elexon down")
+
+    monkeypatch.setattr(store, "_cache", None)
+    monkeypatch.setattr(store, "load_wind_data", failing)
+    for _ in range(2):
+        with pytest.raises(DataUnavailableError):
+            get_wind_data()
+    assert len(calls) == 2  # retried on the next request, not stuck on the failure
+
+    monkeypatch.setattr(store, "load_wind_data", lambda s: _sample())
+    assert get_wind_data().source == "live"

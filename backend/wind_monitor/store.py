@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import config
-from .elexon import ElexonClient, actuals_frame, forecasts_frame, to_utc
+from .elexon import ElexonClient, ElexonError, actuals_frame, forecasts_frame, to_utc
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +85,12 @@ def load_wind_data(settings: config.Settings) -> WindData:
     return fetch_live(settings)
 
 
+class DataUnavailableError(RuntimeError):
+    """The data could not be loaded (Elexon down, or no snapshot in snapshot-only mode)."""
+
+
 # One copy per process. A lock stops two first requests from downloading twice.
+# A failed load is not cached, so the next request tries again.
 _cache: WindData | None = None
 _lock = threading.Lock()
 
@@ -95,5 +100,8 @@ def get_wind_data() -> WindData:
     if _cache is None:
         with _lock:
             if _cache is None:
-                _cache = load_wind_data(config.Settings.from_env())
+                try:
+                    _cache = load_wind_data(config.Settings.from_env())
+                except (ElexonError, FileNotFoundError) as exc:
+                    raise DataUnavailableError(str(exc)) from exc
     return _cache

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from wind_monitor.config import Settings
 from wind_monitor.main import create_app
-from wind_monitor.store import WindData, get_wind_data
+from wind_monitor.store import DataUnavailableError, WindData, get_wind_data
 
 DAYS = [date(2026, 1, 2), date(2026, 1, 3), date(2026, 1, 4)]
 
@@ -150,3 +150,15 @@ def test_serves_frontend_when_static_dir_is_set(tmp_path, wind_data):
 def test_openapi_docs_are_published(client):
     assert client.get("/api/openapi.json").status_code == 200
     assert client.get("/api/docs").status_code == 200
+
+
+def test_data_outage_returns_503_with_a_readable_message():
+    def unavailable():
+        raise DataUnavailableError("Elexon down")
+
+    app = create_app(replace(Settings.from_env(), static_dir=None))
+    app.dependency_overrides[get_wind_data] = unavailable
+    response = TestClient(app).get("/api/accuracy")
+    assert response.status_code == 503
+    assert "temporarily unavailable" in response.json()["detail"]
+    assert "cache-control" not in response.headers  # errors must not be cached by the CDN
