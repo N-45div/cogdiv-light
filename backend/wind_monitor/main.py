@@ -5,10 +5,14 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import router
 from .config import Settings
+from .store import DataUnavailableError
+
+log = logging.getLogger(__name__)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -32,6 +36,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/api/openapi.json",
     )
     app.include_router(router)
+
+    @app.exception_handler(DataUnavailableError)
+    async def data_unavailable(request: Request, exc: DataUnavailableError) -> JSONResponse:
+        # 503 tells the browser (and the CDN) this is temporary; the UI shows the message.
+        log.error("Data unavailable: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Wind data is temporarily unavailable. Please try again shortly."},
+        )
 
     @app.middleware("http")
     async def add_cache_headers(request: Request, call_next):

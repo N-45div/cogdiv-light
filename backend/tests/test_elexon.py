@@ -113,3 +113,31 @@ def test_forecasts_frame_drops_duplicate_rows():
 def test_empty_responses_give_typed_empty_tables():
     assert str(actuals_frame([])["start_time"].dtype) == "datetime64[ns, UTC]"
     assert str(forecasts_frame([])["generation_mw"].dtype) == "float64"
+
+
+@respx.mock
+def test_html_page_with_status_200_is_retried_then_reported():
+    route = respx.get(f"{BASE}/datasets/FUELHH/stream").mock(
+        return_value=httpx.Response(200, text="<html>Down for maintenance</html>")
+    )
+    with pytest.raises(ElexonError, match="unexpected response body"):
+        ElexonClient(BASE).fetch_wind_actuals(date(2026, 1, 1), date(2026, 1, 1))
+    assert route.call_count == 3
+
+
+@respx.mock
+def test_json_that_is_not_a_list_of_records_is_rejected():
+    respx.get(f"{BASE}/datasets/FUELHH/stream").mock(
+        return_value=httpx.Response(200, json={"error": "something"})
+    )
+    with pytest.raises(ElexonError):
+        ElexonClient(BASE).fetch_wind_actuals(date(2026, 1, 1), date(2026, 1, 1))
+
+
+@respx.mock
+def test_network_errors_are_retried():
+    route = respx.get(f"{BASE}/datasets/FUELHH/stream").mock(
+        side_effect=[httpx.ConnectError("boom"), httpx.Response(200, json=[])]
+    )
+    assert ElexonClient(BASE).fetch_wind_actuals(date(2026, 1, 1), date(2026, 1, 1)) == []
+    assert route.call_count == 2

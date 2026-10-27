@@ -80,19 +80,36 @@ class ElexonClient:
                 problem = f"network error: {exc}"
             else:
                 if response.status_code == 200:
-                    payload = response.json()
-                    # Stream endpoints return a bare list; others wrap it in {"data": [...]}.
-                    return payload["data"] if isinstance(payload, dict) else payload
-                if response.status_code not in RETRY_STATUSES:
+                    rows = _rows_from(response)
+                    if rows is not None:
+                        return rows
+                    # e.g. an HTML maintenance page served with 200: treat as a failure.
+                    problem = f"unexpected response body: {response.text[:80]!r}"
+                elif response.status_code not in RETRY_STATUSES:
                     raise ElexonError(
                         f"Elexon {path} returned {response.status_code}: {response.text[:200]}"
                     )
-                problem = f"HTTP {response.status_code}"
+                else:
+                    problem = f"HTTP {response.status_code}"
             if attempt < self._max_attempts:
                 wait = 2 ** (attempt - 1)
                 log.warning("Elexon %s failed (%s); retrying in %ss", path, problem, wait)
                 time.sleep(wait)
         raise ElexonError(f"Elexon {path} failed after {self._max_attempts} attempts: {problem}")
+
+
+def _rows_from(response: httpx.Response) -> list[dict[str, Any]] | None:
+    """The list of records in a response, or None if the body is not what we expect.
+
+    Stream endpoints return a bare JSON list; others wrap it as {"data": [...]}.
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if isinstance(payload, dict):
+        payload = payload.get("data")
+    return payload if isinstance(payload, list) else None
 
 
 def _date_chunks(first: date, last: date) -> Iterator[tuple[date, date]]:
