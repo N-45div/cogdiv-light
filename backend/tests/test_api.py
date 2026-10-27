@@ -84,6 +84,7 @@ def test_day_band_comes_from_other_days_errors(client):
     # Other days were always exactly 300 MW too high, so the band collapses onto the actual.
     on_the_hour = [p for p in body["points"] if p["forecast_mw"] is not None]
     for point in on_the_hour:
+        assert point["expected_mw"] == pytest.approx(point["actual_mw"])
         assert point["low_mw"] == pytest.approx(point["actual_mw"])
         assert point["high_mw"] == pytest.approx(point["actual_mw"])
     assert "other 2 delivery days" in body["band_note"]

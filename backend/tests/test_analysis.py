@@ -119,6 +119,14 @@ def test_error_summary_numbers():
     assert summary["max_over_forecast_mw"] == 200
     assert summary["max_under_forecast_mw"] == 300
     assert summary["nmae_pct"] == 15
+    assert summary["over_forecast_share_pct"] == 50
+    assert summary["debiased_mae_mw"] == 150  # bias is 0, so same as MAE
+
+
+def test_debiased_error_removes_a_constant_offset():
+    summary = an.error_summary(pd.Series([900.0, 1100.0]), pd.Series([5000.0, 5000.0]))
+    assert summary["bias_mw"] == 1000
+    assert summary["debiased_mae_mw"] == 100
 
 
 def test_error_summary_of_nothing():
@@ -157,9 +165,10 @@ def test_band_low_case_uses_high_error_quantile_and_is_clipped_at_zero():
         {"start_time": [ts("2026-01-15T10:00")], "forecast_mw": [500.0], "publish_time": [None]}
     )
     banded = an.add_uncertainty_band(day, history)
-    # errors 0..1000: q10 = 100, q90 = 900. low = 500 - 900 -> clipped to 0; high = 500 - 100
-    assert banded["low_mw"].iloc[0] == 0
-    assert banded["high_mw"].iloc[0] == pytest.approx(400)
+    # errors 0..1000: q10 = 100, q50 = 500, q90 = 900.
+    assert banded["expected_mw"].iloc[0] == pytest.approx(0)  # 500 - 500
+    assert banded["low_mw"].iloc[0] == 0  # 500 - 900, clipped at zero
+    assert banded["high_mw"].iloc[0] == pytest.approx(400)  # 500 - 100
 
 
 def test_band_falls_back_to_all_hours_when_hour_has_no_history():

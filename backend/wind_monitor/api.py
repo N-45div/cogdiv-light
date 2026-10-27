@@ -122,6 +122,7 @@ def day_view(data: DataDep, delivery_date: date, cutoff: CutoffQuery = "09:20") 
         "decision_run": decision_run,
         "summary": {
             "forecast_energy_mwh": an.energy_mwh(forecast["start_time"], forecast["forecast_mw"]),
+            "expected_energy_mwh": an.energy_mwh(forecast["start_time"], forecast["expected_mw"]),
             "low_energy_mwh": an.energy_mwh(forecast["start_time"], forecast["low_mw"]),
             "high_energy_mwh": an.energy_mwh(forecast["start_time"], forecast["high_mw"]),
             "actual_energy_mwh": an.energy_mwh(actual["start_time"], actual["actual_mw"]),
@@ -130,14 +131,15 @@ def day_view(data: DataDep, delivery_date: date, cutoff: CutoffQuery = "09:20") 
             "accuracy": an.error_summary(day_errors["error_mw"], day_errors["actual_mw"]),
         },
         "band_note": (
-            "Shaded range = 10th to 90th percentile of decision-forecast errors at the same "
-            f"hour on the other {n_days} delivery days in scope (an 80% range)."
+            "Expected = forecast adjusted by its median error at that hour; shaded = 80% range "
+            f"(10th-90th percentile of errors), both from the other {n_days} delivery days."
         ),
         "points": [
             {
                 "time": row.start_time.to_pydatetime(),
                 "actual_mw": an._num(row.actual_mw),
                 "forecast_mw": an._num(row.forecast_mw),
+                "expected_mw": an._num(row.expected_mw),
                 "low_mw": an._num(row.low_mw),
                 "high_mw": an._num(row.high_mw),
                 "error_mw": an._num(row.error_mw),

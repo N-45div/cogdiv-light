@@ -19,8 +19,10 @@ import pandas as pd
 from .config import MAX_LEAD_HOURS, UK_TZ
 
 HOUR = pd.Timedelta(hours=1)
-# Band shown around the decision forecast: 10th-90th percentile of past errors (80% range).
+# Likely range of the actual, from past errors: 10th-90th percentile (an 80% range), and the
+# median for the bias-adjusted "expected" value.
 BAND_LOW_Q = 0.10
+BAND_MID_Q = 0.50
 BAND_HIGH_Q = 0.90
 
 
@@ -123,6 +125,10 @@ def error_summary(errors: pd.Series, actuals: pd.Series) -> dict:
         "max_over_forecast_mw": _num(max(errors.max(), 0.0)),
         "max_under_forecast_mw": _num(max(-errors.min(), 0.0)),
         "mean_actual_mw": _num(mean_actual),
+        # Share of hours where the forecast was too high (desk short).
+        "over_forecast_share_pct": _num((errors > 0).mean() * 100),
+        # Average error left after removing the constant offset (the bias): the "random" part.
+        "debiased_mae_mw": _num((errors - errors.mean()).abs().mean()),
         # MAE relative to average wind output: a scale-free "how big is the error" figure.
         "nmae_pct": _num(mae / mean_actual * 100) if mean_actual else None,
     }
@@ -236,30 +242,39 @@ def error_by_lead_time(
 
 
 def error_quantiles_by_hour(errors: pd.DataFrame) -> pd.DataFrame:
-    """10th/90th percentile of error for each hour of day (index: hour)."""
+    """10th/50th/90th percentile of error for each hour of day (index: hour)."""
     grouped = errors.groupby("hour")["error_mw"]
     return pd.DataFrame(
-        {"q_low": grouped.quantile(BAND_LOW_Q), "q_high": grouped.quantile(BAND_HIGH_Q)}
+        {
+            "q_low": grouped.quantile(BAND_LOW_Q),
+            "q_mid": grouped.quantile(BAND_MID_Q),
+            "q_high": grouped.quantile(BAND_HIGH_Q),
+        }
     )
 
 
 def add_uncertainty_band(day_forecast: pd.DataFrame, history: pd.DataFrame) -> pd.DataFrame:
-    """Add low/high wind cases to a day's forecast using past errors at the same hour.
+    """Add the likely range of the actual to a day's forecast, using past errors at that hour.
 
-    actual = forecast - error, so the LOW wind case uses the HIGH error quantile.
-    `history` should exclude the day itself so the band is not built from its own outcome.
-    Wind output cannot be negative, so the band is clipped at zero.
+    actual = forecast - error, so:
+      expected_mw = forecast - median error   (forecast adjusted for its typical bias)
+      low_mw      = forecast - 90th pct error (low wind case)
+      high_mw     = forecast - 10th pct error (high wind case)
+    `history` should exclude the day itself so the range is not built from its own outcome.
+    Wind output cannot be negative, so values are clipped at zero.
     """
     out = day_forecast.copy()
     if history.empty or out.empty:
-        out["low_mw"] = np.nan
-        out["high_mw"] = np.nan
+        for col in ("expected_mw", "low_mw", "high_mw"):
+            out[col] = np.nan
         return out
     quantiles = error_quantiles_by_hour(history)
-    overall = history["error_mw"].quantile([BAND_LOW_Q, BAND_HIGH_Q]).to_numpy()
+    overall = history["error_mw"].quantile([BAND_LOW_Q, BAND_MID_Q, BAND_HIGH_Q]).to_numpy()
     hours = out["start_time"].dt.tz_convert(UK_TZ).dt.hour
     q_low = hours.map(quantiles["q_low"]).fillna(overall[0])
-    q_high = hours.map(quantiles["q_high"]).fillna(overall[1])
+    q_mid = hours.map(quantiles["q_mid"]).fillna(overall[1])
+    q_high = hours.map(quantiles["q_high"]).fillna(overall[2])
+    out["expected_mw"] = (out["forecast_mw"] - q_mid).clip(lower=0)
     out["low_mw"] = (out["forecast_mw"] - q_high).clip(lower=0)
     out["high_mw"] = (out["forecast_mw"] - q_low).clip(lower=0)
     return out
