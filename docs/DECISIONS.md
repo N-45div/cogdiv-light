@@ -185,6 +185,46 @@ A multi-stage build: Node builds the React app, then a `python:3.12-slim` image 
 
 ---
 
+## Part C: hackathon additions (from 28 Oct 2026)
+
+Planning flexible demand around the wind, for the agent and the ESP32 device. See
+[HACKATHON_PLAN.md](HACKATHON_PLAN.md).
+
+### C1. Plan "as of" a moment, from a clock
+
+- **Context:** the January views answer one fixed question (what did the desk have at 09:20?). Planning needs "what do we know right now?", live and in a demo.
+- **Decision:** everything that plans asks a **clock** for "now". In **live** mode it is real time; in **replay** mode it is a movable time inside January 2026 (paused, fast-forward, or stepped through `POST /api/clock`). At time T, a forecast run counts once published (`publish_time <= T`) and an actual once its half-hour has ended plus 30 minutes for Elexon to publish it.
+- **Why:** one code path serves live use, a reproducible demo and a backtest, and the "no look-ahead" rule from A3 holds everywhere.
+- **Trade-off:** the 30-minute publication lag is an assumption, not measured. The replay clock lives in one process, so a multi-instance deployment will need shared clock state.
+- **Code:** `clock.py`, `outlook.py` (`known_actuals`, `published_forecasts`); tests in `test_clock.py`, `test_outlook.py`.
+
+### C2. Likely range from a rolling window, by how far ahead the forecast was made
+
+- **Context:** A8 builds the range from day-ahead errors by hour of day. A re-plan in the evening uses a forecast made 2-6 hours ahead, which errs less.
+- **Decision:** the range uses the errors of **every** run over the last 28 days, grouped into lead-time buckets (0-6 h, 6-12 h, 12-24 h, 24 h+). Each hour of the outlook gets the bias and spread of its own bucket. Too few errors in a bucket: all buckets; too few overall: no range, and plans fall back to the raw forecast.
+- **Why:** fresher forecasts earn a tighter range, which is what makes re-planning worthwhile. It also does the first item of "What I would do next" below (past days only).
+- **Code:** `outlook.outlook`, `analysis.run_errors`, `analysis.apply_error_band` (A8's band now uses the same function).
+
+### C3. The scheduler is plain code; the agent only asks and explains
+
+- **Decision:** `flex.plan_load` puts a job (kWh, kW, earliest, deadline) into the windiest half-hours by a chosen basis: `raw` forecast, `expected` (bias-corrected) or `cautious` (low-wind case). Interruptible jobs take the best slots anywhere; others take the best consecutive run. Every plan comes with the "start straight away" alternative for comparison.
+- **Why:** numbers a language model computes can't be trusted or tested. Here every number in a plan comes from code with tests, and the agent's claims can be checked against it.
+- **Code:** `flex.py`; tests in `test_flex.py`.
+
+### C4. Half-hour slots, each with its hour's forecast
+
+- **Context:** forecasts are hourly; actuals and device control are half-hourly.
+- **Decision:** both half-hours of an hour get that hour's forecast. Slots past the newest run's horizon have no value and are used only if the job needs them.
+- **Why:** same reasoning as A5: no interpolated values. Scoring a plan afterwards uses each half-hour's own actual.
+
+### C5. Live data: a rolling window with small top-ups
+
+- **Decision:** live mode downloads the last 30 days once, then every 15 minutes re-downloads only the last day and merges it in (newer values win, so revised actuals replace old ones). If a top-up fails, the data already held keeps being served and the next try is 2 minutes later.
+- **Why:** a refresh is two small requests instead of a month of data, and an Elexon blip doesn't take the planner down.
+- **Code:** `store.LiveWindow`; tests in `test_live_window.py` (a fake Elexon, no network).
+
+---
+
 ## What I would do next
 
 1. Build the expected value and range from a rolling window of *past* days only, and widen the range so it covers ~80% (it covered 75% in January). Condition the offset on wind level, since it grows in high wind.
