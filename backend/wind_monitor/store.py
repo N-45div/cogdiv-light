@@ -12,8 +12,9 @@ import json
 import logging
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Protocol
 
 import pandas as pd
 
@@ -105,3 +106,99 @@ def get_wind_data() -> WindData:
                 except (ElexonError, FileNotFoundError) as exc:
                     raise DataUnavailableError(str(exc)) from exc
     return _cache
+
+
+# ---- live mode: a rolling window that keeps itself up to date ---------------------------
+
+
+class WindSource(Protocol):
+    """What the live window needs from Elexon (ElexonClient, or a fake in tests)."""
+
+    def fetch_wind_actuals(self, first_day: date, last_day: date) -> list[dict]: ...
+
+    def fetch_wind_forecasts(self, publish_from: datetime, publish_to: datetime) -> list[dict]: ...
+
+
+def _uk_date(moment: pd.Timestamp) -> date:
+    return moment.tz_convert(config.UK_TZ).date()
+
+
+def _merge(old: pd.DataFrame, new: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+    """Old rows plus new ones; where both have a row, the new one wins (revised values)."""
+    both = pd.concat([old, new], ignore_index=True)
+    return both.drop_duplicates(keys, keep="last").sort_values(keys).reset_index(drop=True)
+
+
+class LiveWindow:
+    """The last `days` of wind actuals and forecast runs from Elexon, kept up to date.
+
+    The first call downloads the whole window. Once `refresh` has passed, the next call
+    downloads only the last `overlap` again (new runs, new and revised actuals) and merges it
+    in, so a refresh is a couple of small requests. If a top-up fails, the data already held
+    keeps being served and the next call after `retry` tries again; only a failed first
+    download is an error.
+    """
+
+    def __init__(
+        self,
+        client: WindSource,
+        days: float = config.HISTORY_DAYS,
+        refresh: timedelta = timedelta(minutes=config.LIVE_REFRESH_MINUTES),
+        retry: timedelta = timedelta(minutes=2),
+        overlap: timedelta = timedelta(days=1),
+    ) -> None:
+        self._client = client
+        # Two extra days so the first hours of the window still have their day-ahead runs.
+        self._keep = pd.Timedelta(days=days + 2)
+        self._refresh, self._retry, self._overlap = (
+            pd.Timedelta(refresh),
+            pd.Timedelta(retry),
+            pd.Timedelta(overlap),
+        )
+        self._data: WindData | None = None
+        self._next_update: pd.Timestamp | None = None
+        self._lock = threading.Lock()
+
+    def get(self, now: pd.Timestamp) -> WindData:
+        with self._lock:
+            if self._data is None or now >= self._next_update:
+                self._update(now)
+            return self._data
+
+    def _update(self, now: pd.Timestamp) -> None:
+        first_load = self._data is None
+        keep_from = now - self._keep
+        fetch_from = keep_from if first_load else now - self._overlap
+        try:
+            actuals = actuals_frame(
+                self._client.fetch_wind_actuals(_uk_date(fetch_from), _uk_date(now))
+            )
+            forecasts = forecasts_frame(
+                self._client.fetch_wind_forecasts(fetch_from.to_pydatetime(), now.to_pydatetime())
+            )
+        except ElexonError as exc:
+            if first_load:
+                raise DataUnavailableError(str(exc)) from exc
+            log.warning("Live top-up failed, serving older data: %s", exc)
+            self._next_update = now + self._retry
+            return
+        if not first_load:
+            actuals = _merge(self._data.actuals, actuals, ["start_time"])
+            forecasts = _merge(self._data.forecasts, forecasts, ["publish_time", "start_time"])
+        actuals = actuals[actuals["start_time"] >= keep_from].reset_index(drop=True)
+        forecasts = forecasts[forecasts["publish_time"] >= keep_from].reset_index(drop=True)
+        self._data = WindData(actuals, forecasts, "live", retrieved_at=now.to_pydatetime())
+        self._next_update = now + self._refresh
+
+
+_live: LiveWindow | None = None
+_live_lock = threading.Lock()
+
+
+def get_live_window() -> LiveWindow:
+    global _live
+    if _live is None:
+        with _live_lock:
+            if _live is None:
+                _live = LiveWindow(ElexonClient(config.Settings.from_env().elexon_base_url))
+    return _live
