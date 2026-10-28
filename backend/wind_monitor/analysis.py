@@ -54,17 +54,17 @@ def date_range(first: date, last: date) -> list[date]:
 # ---- which forecast did the desk have? -------------------------------------------------
 
 
-def decision_forecast(forecasts: pd.DataFrame, delivery_day: date, cutoff: time) -> pd.DataFrame:
-    """Latest forecast published at or before the cutoff, for each target time of the day.
+def forecast_as_of(
+    forecasts: pd.DataFrame, as_of: pd.Timestamp, start: pd.Timestamp, end: pd.Timestamp
+) -> pd.DataFrame:
+    """Latest forecast published at or before `as_of`, for each target time in [start, end).
 
-    Normally a single run covers the whole day; picking per target time means a run that only
-    partly covers the day still contributes, with older runs filling the rest.
-    Columns: start_time, forecast_mw, publish_time.
+    This is "what the forecast said at that moment", with no look-ahead. Picking per target
+    time means a run that only partly covers the window still contributes, with older runs
+    filling the rest. Columns: start_time, forecast_mw, publish_time.
     """
-    start, end = delivery_window(delivery_day)
-    cut = decision_cutoff(delivery_day, cutoff)
     available = forecasts[
-        (forecasts["publish_time"] <= cut)
+        (forecasts["publish_time"] <= as_of)
         & (forecasts["start_time"] >= start)
         & (forecasts["start_time"] < end)
     ]
@@ -74,6 +74,15 @@ def decision_forecast(forecasts: pd.DataFrame, delivery_day: date, cutoff: time)
         .sort_values("start_time")[["start_time", "forecast_mw", "publish_time"]]
         .reset_index(drop=True)
     )
+
+
+def decision_forecast(forecasts: pd.DataFrame, delivery_day: date, cutoff: time) -> pd.DataFrame:
+    """The forecast the desk had at the cutoff, for each hour of the delivery day.
+
+    Columns: start_time, forecast_mw, publish_time.
+    """
+    start, end = delivery_window(delivery_day)
+    return forecast_as_of(forecasts, decision_cutoff(delivery_day, cutoff), start, end)
 
 
 def decision_errors(
@@ -216,6 +225,29 @@ def error_histogram(errors: pd.Series, bin_mw: float = 500.0) -> list[dict]:
     ]
 
 
+def run_errors(
+    forecasts: pd.DataFrame,
+    actuals: pd.DataFrame,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    max_lead_hours: float = MAX_LEAD_HOURS,
+) -> pd.DataFrame:
+    """Error of EVERY forecast run for target times in [start, end), not just the decision run.
+
+    Only real forecasts count: values a run gives for hours already past when it was published
+    (lead < 0) are left out. Columns: publish_time, start_time, forecast_mw, actual_mw,
+    error_mw, lead_hours.
+    """
+    targets = forecasts[(forecasts["start_time"] >= start) & (forecasts["start_time"] < end)]
+    pairs = targets.rename(columns={"generation_mw": "forecast_mw"}).merge(
+        actuals.rename(columns={"generation_mw": "actual_mw"}), on="start_time", how="inner"
+    )
+    pairs["lead_hours"] = (pairs["start_time"] - pairs["publish_time"]) / HOUR
+    pairs = pairs[(pairs["lead_hours"] >= 0) & (pairs["lead_hours"] <= max_lead_hours)].copy()
+    pairs["error_mw"] = pairs["forecast_mw"] - pairs["actual_mw"]
+    return pairs.reset_index(drop=True)
+
+
 def error_by_lead_time(
     forecasts: pd.DataFrame,
     actuals: pd.DataFrame,
@@ -230,13 +262,7 @@ def error_by_lead_time(
     """
     start, _ = delivery_window(first_day)
     _, end = delivery_window(last_day)
-    targets = forecasts[(forecasts["start_time"] >= start) & (forecasts["start_time"] < end)]
-    pairs = targets.merge(
-        actuals.rename(columns={"generation_mw": "actual_mw"}), on="start_time", how="inner"
-    )
-    pairs["lead_hours"] = (pairs["start_time"] - pairs["publish_time"]) / HOUR
-    pairs = pairs[(pairs["lead_hours"] >= 0) & (pairs["lead_hours"] <= max_lead_hours)]
-    pairs["error_mw"] = pairs["generation_mw"] - pairs["actual_mw"]
+    pairs = run_errors(forecasts, actuals, start, end, max_lead_hours)
     pairs["bucket"] = np.floor(pairs["lead_hours"]).astype(int)
     rows = []
     for bucket, group in pairs.groupby("bucket"):
@@ -257,12 +283,12 @@ def error_by_lead_time(
 # ---- uncertainty band for one day ------------------------------------------------------
 
 
-def error_quantiles_by_hour(errors: pd.DataFrame) -> pd.DataFrame:
-    """10th/50th/90th percentile of error for each hour of day (index: hour).
+def error_quantiles(errors: pd.DataFrame, by: str) -> pd.DataFrame:
+    """10th/50th/90th percentile of error for each value of column `by` (index: that value).
 
-    Hours with fewer than MIN_BAND_SAMPLES errors are left out (callers fall back to all hours).
+    Groups with fewer than MIN_BAND_SAMPLES errors are left out (callers fall back to all).
     """
-    grouped = errors.groupby("hour")["error_mw"]
+    grouped = errors.groupby(by, observed=True)["error_mw"]
     quantiles = pd.DataFrame(
         {
             "q_low": grouped.quantile(BAND_LOW_Q),
@@ -273,32 +299,52 @@ def error_quantiles_by_hour(errors: pd.DataFrame) -> pd.DataFrame:
     return quantiles[grouped.size() >= MIN_BAND_SAMPLES]
 
 
-def add_uncertainty_band(day_forecast: pd.DataFrame, history: pd.DataFrame) -> pd.DataFrame:
-    """Add the likely range of the actual to a day's forecast, using past errors at that hour.
+def error_quantiles_by_hour(errors: pd.DataFrame) -> pd.DataFrame:
+    """10th/50th/90th percentile of error for each hour of day (index: hour)."""
+    return error_quantiles(errors, "hour")
 
-    actual = forecast - error, so:
+
+def apply_error_band(
+    forecast: pd.DataFrame, keys: pd.Series, history: pd.DataFrame, by: str
+) -> pd.DataFrame:
+    """Add the likely range of the actual to a forecast, from past errors in the same group.
+
+    `keys` gives each forecast row's group (e.g. its hour of day), matching column `by` of
+    `history`. actual = forecast - error, so:
       expected_mw = forecast - median error   (forecast adjusted for its typical bias)
       low_mw      = forecast - 90th pct error (low wind case)
       high_mw     = forecast - 10th pct error (high wind case)
-    `history` should exclude the day itself so the range is not built from its own outcome.
-    An hour with too few past errors uses all hours instead; with too little history overall
+    A group with too few past errors uses all of them instead; with too little history overall
     no range is given. Wind output cannot be negative, so values are clipped at zero.
     """
-    out = day_forecast.copy()
+    out = forecast.copy()
     if len(history) < MIN_BAND_SAMPLES or out.empty:
         for col in ("expected_mw", "low_mw", "high_mw"):
             out[col] = np.nan
         return out
-    quantiles = error_quantiles_by_hour(history)
+    quantiles = error_quantiles(history, by)
     overall = history["error_mw"].quantile([BAND_LOW_Q, BAND_MID_Q, BAND_HIGH_Q]).to_numpy()
-    hours = out["start_time"].dt.tz_convert(UK_TZ).dt.hour
-    q_low = hours.map(quantiles["q_low"]).fillna(overall[0])
-    q_mid = hours.map(quantiles["q_mid"]).fillna(overall[1])
-    q_high = hours.map(quantiles["q_high"]).fillna(overall[2])
+    keys = pd.Series(keys.to_numpy(), index=out.index, dtype=object)
+    lookup = {col: quantiles[col].to_dict() for col in ("q_low", "q_mid", "q_high")}
+    q_low = keys.map(lookup["q_low"]).astype(float).fillna(overall[0])
+    q_mid = keys.map(lookup["q_mid"]).astype(float).fillna(overall[1])
+    q_high = keys.map(lookup["q_high"]).astype(float).fillna(overall[2])
     out["expected_mw"] = (out["forecast_mw"] - q_mid).clip(lower=0)
     out["low_mw"] = (out["forecast_mw"] - q_high).clip(lower=0)
     out["high_mw"] = (out["forecast_mw"] - q_low).clip(lower=0)
     return out
+
+
+def add_uncertainty_band(day_forecast: pd.DataFrame, history: pd.DataFrame) -> pd.DataFrame:
+    """Add the likely range of the actual to a day's forecast, using past errors at that hour.
+
+    `history` should exclude the day itself so the range is not built from its own outcome.
+    See `apply_error_band` for the formulas and fallbacks.
+    """
+    if day_forecast.empty:
+        return apply_error_band(day_forecast, pd.Series(dtype=object), history, "hour")
+    hours = day_forecast["start_time"].dt.tz_convert(UK_TZ).dt.hour
+    return apply_error_band(day_forecast, hours, history, "hour")
 
 
 # ---- forecast runs around one day ------------------------------------------------------
