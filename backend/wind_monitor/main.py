@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import router
 from .config import Settings
+from .planning_api import router as planning_router
 from .store import DataUnavailableError
 
 log = logging.getLogger(__name__)
@@ -29,13 +30,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         description=(
             "Day-ahead view of GB national wind generation forecasts (Elexon WINDFOR) "
-            "against actual outturn (Elexon FUELHH), for purchase decisions in January 2026."
+            "against actual outturn (Elexon FUELHH), for purchase decisions in January 2026, "
+            "plus wind-aware planning of flexible demand (live, or replaying January 2026)."
         ),
         docs_url="/api/docs",
         redoc_url=None,
         openapi_url="/api/openapi.json",
     )
     app.include_router(router)
+    app.include_router(planning_router)
 
     @app.exception_handler(DataUnavailableError)
     async def data_unavailable(request: Request, exc: DataUnavailableError) -> JSONResponse:

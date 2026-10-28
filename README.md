@@ -97,6 +97,9 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 | `SNAPSHOT_DIR` | `backend/data` | Where the snapshot CSVs live |
 | `STATIC_DIR` | unset | Folder of the built React app to serve (set in Docker) |
 | `ELEXON_BASE_URL` | `https://data.elexon.co.uk/bmrs/api/v1` | Elexon API base URL |
+| `CLOCK_MODE` | `replay` | Planning clock: `replay` (moves through January 2026) or `live` (real time, rolling live data) |
+| `REPLAY_START` | `2026-01-14T09:00` | Where the replay clock starts (no zone = UK time) |
+| `REPLAY_SPEED` | `0` | Simulated seconds per real second (0 = paused) |
 
 ---
 
@@ -152,6 +155,9 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 | `GET /api/day?delivery_date=2026-01-15&cutoff=09:20` | The forecast used for that day, its 80% range, actuals, errors, and every forecast run around the decision |
 | `GET /api/accuracy?cutoff=09:20` | Error summary, by delivery day, by hour, by lead time, and a histogram |
 | `GET /api/health` | Liveness check |
+| `GET /api/clock`, `POST /api/clock` | The planning clock; in replay mode, jump, step or change speed |
+| `GET /api/outlook?hours=24` | Forecast as of the clock, bias-corrected with a likely range, and how actual wind has tracked it recently |
+| `POST /api/plan` | Schedule a flexible job (kWh, kW, deadline) into the windiest half-hours |
 
 Interactive documentation: `/api/docs`.
 
