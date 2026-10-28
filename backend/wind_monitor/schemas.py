@@ -160,3 +160,142 @@ class AccuracyView(BaseModel):
     by_lead_time: list[LeadTimeAccuracy]
     decision_lead_hours: LeadRange
     histogram: list[HistogramBin]
+
+
+# ---- planning: clock, outlook, flexible-load plans --------------------------------------
+
+
+class ClockOut(BaseModel):
+    mode: str = Field(description="'replay' (moving through January 2026) or 'live'")
+    now: datetime = Field(description="The moment everything is planned 'as of'")
+    speed: float = Field(description="Simulated seconds per real second (0 = paused)")
+    first: datetime | None = Field(None, description="Earliest replay time")
+    last: datetime | None = Field(None, description="Latest replay time")
+
+
+class ClockUpdate(BaseModel):
+    at: datetime | None = Field(None, description="Jump to this time (no zone = UK local)")
+    speed: float | None = Field(None, ge=0, description="Simulated seconds per real second")
+    advance_minutes: float | None = Field(None, description="Move forward (or back) this much")
+
+
+class LeadBucketStats(BaseModel):
+    lead_bucket: str = Field(description="How far ahead the forecasts were made, e.g. '0-6h'")
+    n: int
+    bias_mw: float | None = Field(None, description="Mean of forecast - actual (+ = too high)")
+    mae_mw: float | None = None
+    p10_error_mw: float | None = None
+    p90_error_mw: float | None = None
+    over_forecast_share_pct: float | None = None
+
+
+class ErrorHistory(BaseModel):
+    days: float = Field(description="Rolling window of past errors used for the band")
+    n: int = Field(description="Forecast/actual pairs in the window")
+    by_lead: list[LeadBucketStats]
+
+
+class OutlookPoint(BaseModel):
+    time: datetime = Field(description="Start of the hour (UTC)")
+    forecast_mw: float | None
+    expected_mw: float | None = Field(None, description="Forecast corrected for its usual bias")
+    low_mw: float | None = Field(None, description="Low wind case (90% chance of more)")
+    high_mw: float | None = Field(None, description="High wind case (10% chance of more)")
+    lead_hours: float = Field(description="How far ahead this forecast was made")
+    publish_time: datetime
+
+
+class TrackingPoint(BaseModel):
+    time: datetime
+    actual_mw: float | None
+    forecast_mw: float | None = Field(None, description="Freshest forecast made before the hour")
+    error_mw: float | None = Field(None, description="forecast - actual (+ = wind below forecast)")
+    lead_hours: float
+
+
+class RecentTracking(BaseModel):
+    hours: float
+    mean_error_mw: float | None = Field(
+        None, description="Average forecast - actual over the period (+ = wind below forecast)"
+    )
+    points: list[TrackingPoint]
+
+
+class LatestActual(BaseModel):
+    time: datetime
+    actual_mw: float | None
+
+
+class OutlookView(BaseModel):
+    as_of: datetime
+    mode: str
+    data_source: str
+    latest_run: datetime | None = Field(None, description="Newest forecast run published so far")
+    latest_actual: LatestActual | None
+    history: ErrorHistory
+    band_note: str
+    points: list[OutlookPoint]
+    recent: RecentTracking
+
+
+class PlanRequest(BaseModel):
+    energy_kwh: float = Field(gt=0, le=500, description="Energy the job needs")
+    power_kw: float = Field(gt=0, le=100, description="Most power the device can draw")
+    earliest: datetime | None = Field(None, description="Not before (default: now)")
+    deadline: datetime | None = Field(None, description="Done by (default: next 07:00 UK)")
+    interruptible: bool = Field(True, description="Can it pause and resume (EV: yes)")
+    basis: str = Field(
+        "expected",
+        pattern="^(raw|expected|cautious)$",
+        description="raw = forecast as is; expected = bias-corrected; cautious = low-wind case",
+    )
+
+
+class PlanJob(BaseModel):
+    energy_kwh: float
+    power_kw: float
+    earliest: datetime
+    deadline: datetime
+    interruptible: bool
+
+
+class PlanBlock(BaseModel):
+    start: datetime
+    end: datetime
+    energy_kwh: float
+
+
+class WindDuring(BaseModel):
+    forecast_mw: float | None
+    expected_mw: float | None
+    low_mw: float | None
+
+
+class PlanWind(BaseModel):
+    planned: WindDuring = Field(description="Average wind while the plan runs (energy-weighted)")
+    asap: WindDuring = Field(description="The same, if the job simply started straight away")
+
+
+class PlanSlot(BaseModel):
+    time: datetime
+    on: bool
+    energy_kwh: float
+    forecast_mw: float | None
+    expected_mw: float | None
+    low_mw: float | None
+    high_mw: float | None
+    score_mw: float | None = Field(None, description="The value used to rank this slot")
+
+
+class PlanView(BaseModel):
+    as_of: datetime
+    basis: str
+    job: PlanJob
+    feasible: bool
+    planned_kwh: float
+    shortfall_kwh: float
+    blocks: list[PlanBlock]
+    wind: PlanWind
+    forecast_run: datetime | None = Field(None, description="Newest forecast run used")
+    notes: list[str]
+    slots: list[PlanSlot]
