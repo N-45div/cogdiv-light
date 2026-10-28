@@ -45,6 +45,23 @@ ACTUALS_TO = DELIVERY_LAST
 # Lead-time analysis looks at forecasts made 0-48 hours before the target time.
 MAX_LEAD_HOURS = 48
 
+# ---- the clock: live, or replaying January 2026 -------------------------------------
+# Planning works "as of" a moment: only forecasts published and actuals settled by then count.
+# In live mode that moment is now; in replay mode it moves through the January snapshot, which
+# gives a reproducible demo and a backtest with no look-ahead.
+CLOCK_MODES = ("replay", "live")
+# Replay can move from the first decision day to the end of the last delivery day.
+REPLAY_FIRST = datetime.combine(DECISION_FIRST, time(0), UK_TZ)
+REPLAY_LAST = datetime.combine(DELIVERY_LAST + timedelta(days=1), time(0), UK_TZ)
+# Default replay moment: 09:00 on 14 Jan, just before the cut-off for 15 Jan delivery
+# (the worked example in docs/DECISIONS.md, A3).
+DEFAULT_REPLAY_START = datetime(2026, 1, 14, 9, 0, tzinfo=UK_TZ)
+
+# How many days of past forecast errors feed the uncertainty band when planning.
+HISTORY_DAYS = 28
+# Live mode re-downloads the newest forecast runs and actuals this often.
+LIVE_REFRESH_MINUTES = 15
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -59,6 +76,12 @@ class Settings:
     snapshot_dir: Path
     # Folder with the built React app; served by FastAPI when running in Docker.
     static_dir: Path | None
+    # "replay": the clock moves through January 2026 (snapshot data).
+    # "live": the clock is real time and data is a rolling window downloaded from Elexon.
+    clock_mode: str = "replay"
+    replay_start: datetime = DEFAULT_REPLAY_START
+    # Simulated seconds per real second; 0 = paused (move it with POST /api/clock).
+    replay_speed: float = 0.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -70,4 +93,22 @@ class Settings:
             data_source=os.environ.get("DATA_SOURCE", "auto").lower(),
             snapshot_dir=Path(os.environ.get("SNAPSHOT_DIR", BACKEND_DIR / "data")),
             static_dir=Path(static) if static else None,
+            clock_mode=_choice("CLOCK_MODE", "replay", CLOCK_MODES),
+            replay_start=_moment(os.environ.get("REPLAY_START"), DEFAULT_REPLAY_START),
+            replay_speed=float(os.environ.get("REPLAY_SPEED", "0")),
         )
+
+
+def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
+    value = os.environ.get(name, default).lower()
+    if value not in allowed:
+        raise ValueError(f"{name} must be one of {allowed}, not {value!r}")
+    return value
+
+
+def _moment(value: str | None, default: datetime) -> datetime:
+    """ISO date-time from the environment; a time without a zone is UK local time."""
+    if not value:
+        return default
+    moment = datetime.fromisoformat(value)
+    return moment if moment.tzinfo else moment.replace(tzinfo=UK_TZ)
