@@ -195,13 +195,14 @@ Planning flexible demand around the wind, for the agent and the ESP32 device. Se
 - **Context:** the January views answer one fixed question (what did the desk have at 09:20?). Planning needs "what do we know right now?", live and in a demo.
 - **Decision:** everything that plans asks a **clock** for "now". In **live** mode it is real time; in **replay** mode it is a movable time inside January 2026 (paused, fast-forward, or stepped through `POST /api/clock`). At time T, a forecast run counts once published (`publish_time <= T`) and an actual once its half-hour has ended plus 30 minutes for Elexon to publish it.
 - **Why:** one code path serves live use, a reproducible demo and a backtest, and the "no look-ahead" rule from A3 holds everywhere.
-- **Trade-off:** the 30-minute publication lag is an assumption, not measured. The replay clock lives in one process, so a multi-instance deployment will need shared clock state.
+- **Checked live (29 Oct 2026):** at 05:46 UTC the newest half-hour available had ended 16 minutes earlier, so 30 minutes is on the safe side: the planner may ignore the newest reading, but never sees one early. Elexon's `publishTime` field is just the end of the half-hour, so it can't measure the delay; `scripts/live_check.py` measures it from the newest half-hour available instead.
+- **Trade-off:** the replay clock lives in one process, so a multi-instance deployment will need shared clock state.
 - **Code:** `clock.py`, `outlook.py` (`known_actuals`, `published_forecasts`); tests in `test_clock.py`, `test_outlook.py`.
 
 ### C2. Likely range from a rolling window, by how far ahead the forecast was made
 
 - **Context:** A8 builds the range from day-ahead errors by hour of day. A re-plan in the evening uses a forecast made 2-6 hours ahead, which errs less.
-- **Decision:** the range uses the errors of **every** run over the last 28 days, grouped into lead-time buckets (0-6 h, 6-12 h, 12-24 h, 24 h+). Each hour of the outlook gets the bias and spread of its own bucket. Too few errors in a bucket: all buckets; too few overall: no range, and plans fall back to the raw forecast.
+- **Decision:** the range uses **every** run over the last 28 days, grouped into lead-time buckets (0-6 h, 6-12 h, 12-24 h, 24 h+). Each hour of the outlook gets the track record of its own bucket (as a ratio, see C6). Too few pairs in a bucket: all buckets; too few overall: no range, and plans fall back to the raw forecast.
 - **Why:** fresher forecasts earn a tighter range, which is what makes re-planning worthwhile. It also does the first item of "What I would do next" below (past days only).
 - **Code:** `outlook.outlook`, `analysis.run_errors`, `analysis.apply_error_band` (A8's band now uses the same function).
 
@@ -222,6 +223,23 @@ Planning flexible demand around the wind, for the agent and the ESP32 device. Se
 - **Decision:** live mode downloads the last 30 days once, then every 15 minutes re-downloads only the last day and merges it in (newer values win, so revised actuals replace old ones). If a top-up fails, the data already held keeps being served and the next try is 2 minutes later.
 - **Why:** a refresh is two small requests instead of a month of data, and an Elexon blip doesn't take the planner down.
 - **Code:** `store.LiveWindow`; tests in `test_live_window.py` (a fake Elexon, no network).
+
+### C6. Scale the forecast, don't shift it
+
+- **Context:** the first live test (29 Oct 2026) showed the fixed offset failing. Over the previous 28 days the forecast ran ~2,500 MW high, so at 05:00 a 4,781 MW forecast became an "expected" 2,396 MW, while 3,224 MW actually came. The gap grows with the wind: in October the median error was ~700 MW when the forecast was under 4 GW and ~4,600 MW above 16 GW. As a share, metered wind was a steadier 75-87% of the forecast.
+- **Options:** (a) subtract the median past error (A8's method); (b) multiply by the median past actual/forecast ratio.
+- **Decision:** **(b) for planning.** `expected = forecast x median ratio`, range = `forecast x` 10th/90th percentile ratio, per lead-time bucket. Ratios are learned only from hours forecast at 1,000 MW or more (dividing by a near-zero forecast gives nonsense). The January day view keeps A8's offset, so its published numbers don't change.
+- **Evidence:** learn from all earlier days, test on the last 7 (`scripts/compare_corrections.py`):
+
+  | | Raw | Offset | Ratio |
+  |---|---|---|---|
+  | January 2026: average error | 2,226 MW | 1,239 MW | **1,065 MW** |
+  | January 2026: 80% range held the actual | | 90% | 85% (and narrower) |
+  | Oct 2026 (live): average error | 4,419 MW | 2,891 MW | **2,191 MW** |
+  | Oct 2026 (live): 80% range held the actual | | **50%** | 83% |
+
+- **What it doesn't change:** which hours look windiest. Scaling every hour by about the same ratio keeps their order, so plans barely move (January preview: 12,648 vs 12,636 MW). It fixes the numbers the agent and the device *show*, and the "how short will the desk be" sum.
+- **Code:** `outlook.ratio_band`, `analysis.group_quantiles`; `test_outlook.py::test_correction_scales_with_the_wind`.
 
 ---
 
