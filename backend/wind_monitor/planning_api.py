@@ -69,9 +69,9 @@ def _band_note(history: pd.DataFrame) -> str:
     if len(history) < an.MIN_BAND_SAMPLES:
         return "Not enough past errors yet: no bias correction or range is given."
     return (
-        f"Expected = forecast corrected by the median past error of forecasts made as far "
-        f"ahead; range = 10th-90th percentile of those errors, from {len(history):,} "
-        f"forecast/actual pairs over the last {config.HISTORY_DAYS} days."
+        f"Expected = forecast scaled by how metered wind compared with forecasts made as far "
+        f"ahead (median actual/forecast); range = 10th-90th percentile of that ratio, from "
+        f"{len(history):,} forecast/actual pairs over the last {config.HISTORY_DAYS} days."
     )
 
 

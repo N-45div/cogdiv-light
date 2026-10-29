@@ -187,6 +187,9 @@ class LeadBucketStats(BaseModel):
     p10_error_mw: float | None = None
     p90_error_mw: float | None = None
     over_forecast_share_pct: float | None = None
+    actual_share_pct: float | None = Field(
+        None, description="Metered wind as % of the forecast (median); the forecast is scaled by it"
+    )
 
 
 class ErrorHistory(BaseModel):
@@ -198,7 +201,9 @@ class ErrorHistory(BaseModel):
 class OutlookPoint(BaseModel):
     time: datetime = Field(description="Start of the hour (UTC)")
     forecast_mw: float | None
-    expected_mw: float | None = Field(None, description="Forecast corrected for its usual bias")
+    expected_mw: float | None = Field(
+        None, description="Forecast scaled by how metered wind usually compares with it"
+    )
     low_mw: float | None = Field(None, description="Low wind case (90% chance of more)")
     high_mw: float | None = Field(None, description="High wind case (10% chance of more)")
     lead_hours: float = Field(description="How far ahead this forecast was made")

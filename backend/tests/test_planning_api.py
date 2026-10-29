@@ -1,8 +1,9 @@
 """End-to-end tests of the planning API: /api/clock, /api/outlook, /api/plan.
 
 Fixture: actual wind is 10,000 MW, except 02:00-04:00 UTC every night when it is 15,000 MW.
-A run is published every 6 hours for the next 48 hours, too high by 100 MW under 6 h ahead and
-by 1,000 MW further out. The clock is a paused replay at 18:00 on 8 Jan.
+A run is published every 6 hours for the next 48 hours, 2% too high under 6 h ahead and 20% too
+high further out, so scaling each hour by its lead time's track record recovers the truth.
+The clock is a paused replay at 18:00 on 8 Jan.
 """
 
 from dataclasses import replace
@@ -33,7 +34,7 @@ def _data() -> WindData:
     for published in pd.date_range(FIRST - pd.Timedelta(days=1), periods=4 * 13, freq="6h"):
         for h in range(1, 49):
             target = published + pd.Timedelta(hours=h)
-            rows.append((published, target, _actual(target) + (100 if h < 6 else 1000)))
+            rows.append((published, target, _actual(target) * (1.02 if h < 6 else 1.2)))
     forecasts = pd.DataFrame(rows, columns=["publish_time", "start_time", "generation_mw"])
     for df in (actuals, forecasts):
         for col in df.columns:
@@ -98,9 +99,9 @@ def test_outlook_is_as_of_the_clock(client, clock):
     assert body["latest_actual"] == {"time": "2026-01-08T17:00:00Z", "actual_mw": 10_000.0}
     assert body["points"][0]["time"] == "2026-01-08T18:00:00Z"
     assert all(p["publish_time"] <= body["as_of"] for p in body["points"])
-    # Each hour corrected by its own lead-time bias lands on the true value.
+    # Each hour scaled by its own lead time's track record lands on the true value.
     for point in body["points"]:
-        assert point["expected_mw"] == _actual(pd.Timestamp(point["time"]))
+        assert point["expected_mw"] == pytest.approx(_actual(pd.Timestamp(point["time"])))
 
     clock.set(at=pd.Timestamp("2026-01-08T23:59Z"))  # the midnight run is not out yet
     assert client.get("/api/outlook").json()["latest_run"] == "2026-01-08T18:00:00Z"
@@ -109,10 +110,11 @@ def test_outlook_is_as_of_the_clock(client, clock):
 def test_outlook_reports_history_and_recent_tracking(client):
     body = client.get("/api/outlook", params={"recent_hours": 3}).json()
     by_lead = {row["lead_bucket"]: row for row in body["history"]["by_lead"]}
-    assert by_lead["0-6h"]["bias_mw"] == 100
-    assert by_lead["24h+"]["bias_mw"] == 1000
-    assert body["history"]["n"] > 0 and "median past error" in body["band_note"]
-    assert body["recent"]["mean_error_mw"] == 100
+    assert by_lead["0-6h"]["actual_share_pct"] == pytest.approx(100 / 1.02)
+    assert by_lead["24h+"]["actual_share_pct"] == pytest.approx(100 / 1.2)
+    assert by_lead["24h+"]["over_forecast_share_pct"] == 100
+    assert body["history"]["n"] > 0 and "scaled" in body["band_note"]
+    assert body["recent"]["mean_error_mw"] == pytest.approx(200)  # 2% of 10,000 MW
     assert [p["time"][11:16] for p in body["recent"]["points"]] == ["15:00", "16:00", "17:00"]
 
 
@@ -129,8 +131,8 @@ def test_plan_goes_in_the_windy_hours_by_the_default_deadline(client):
     assert body["job"]["deadline"] == "2026-01-09T07:00:00Z"  # next 07:00 UK time
     assert body["feasible"] and body["planned_kwh"] == 14
     assert _blocks(body) == [("2026-01-09T02:00:00Z", "2026-01-09T04:00:00Z")]
-    assert body["wind"]["planned"]["expected_mw"] == 15_000
-    assert body["wind"]["asap"]["expected_mw"] == 10_000
+    assert body["wind"]["planned"]["expected_mw"] == pytest.approx(15_000)
+    assert body["wind"]["asap"]["expected_mw"] == pytest.approx(10_000)
     assert body["forecast_run"] == "2026-01-08T18:00:00Z"
     assert body["notes"] == []
     assert len(body["slots"]) == 26 and sum(s["on"] for s in body["slots"]) == 4
