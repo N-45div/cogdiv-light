@@ -77,6 +77,45 @@ def test_band_depends_on_how_far_ahead_the_forecast_was_made():
     assert summary["24h+"]["over_forecast_share_pct"] == 100
 
 
+def test_correction_scales_with_the_wind():
+    """Calm nights at 4,000 MW, windy days at 16,000 MW, forecast always 25% too high: the gap
+    is 1,000 MW when calm and 4,000 MW when windy. Scaling recovers both; one fixed offset
+    cannot."""
+    halves = pd.date_range(FIRST, periods=48 * 10, freq="30min")
+    level = [4_000.0 if t.hour < 12 else 16_000.0 for t in halves]
+    actuals = pd.DataFrame({"start_time": halves.as_unit("ns"), "generation_mw": level})
+    rows = []
+    for published in pd.date_range(FIRST - pd.Timedelta(days=1), periods=44, freq="6h"):
+        for h in range(1, 49):
+            target = published + pd.Timedelta(hours=h)
+            rows.append((published, target, (4_000.0 if target.hour < 12 else 16_000.0) * 1.25))
+    forecasts = pd.DataFrame(rows, columns=["publish_time", "start_time", "generation_mw"])
+    for col in ("publish_time", "start_time"):
+        forecasts[col] = forecasts[col].dt.as_unit("ns")
+    data = WindData(actuals, forecasts, "snapshot", datetime(2026, 10, 1, tzinfo=UTC))
+
+    forecast, history = ol.outlook(data, pd.Timestamp("2026-01-08T00:00Z"), hours=24)
+    truth = forecast["start_time"].dt.hour.map(lambda h: 4_000.0 if h < 12 else 16_000.0)
+    assert np.allclose(forecast["expected_mw"], truth)
+    # The old fixed-offset correction gets both wrong: it subtracts the same amount from both.
+    shifted = ol.an.apply_error_band(forecast, forecast["lead_bucket"], history, "lead_bucket")
+    assert not np.allclose(shifted["expected_mw"], truth, atol=500)
+    assert {row["actual_share_pct"] for row in ol.history_summary(history)} == {80.0}
+
+
+def test_tiny_forecasts_do_not_teach_ratios():
+    """A 10 MW forecast for a 10,000 MW hour would be a ratio of 1,000: such hours are skipped."""
+    data = _data()
+    tiny = data.forecasts["start_time"].dt.hour == 3
+    data.forecasts.loc[tiny, "generation_mw"] = 10.0
+    history = ol.error_history(data, pd.Timestamp("2026-01-08T12:00Z"))
+    at_3am = history["start_time"].dt.hour == 3
+    assert at_3am.any() and history.loc[at_3am, "ratio"].isna().all()
+    assert history.loc[~at_3am, "ratio"].notna().all()
+    forecast, _ = ol.outlook(data, pd.Timestamp("2026-01-08T12:00Z"), hours=24)
+    assert np.allclose(forecast.loc[forecast["forecast_mw"] > 1000, "expected_mw"], ACTUAL_MW)
+
+
 def test_history_ignores_errors_older_than_the_window():
     data = _data()
     as_of = pd.Timestamp("2026-01-08T12:00Z")
