@@ -283,12 +283,12 @@ def error_by_lead_time(
 # ---- uncertainty band for one day ------------------------------------------------------
 
 
-def error_quantiles(errors: pd.DataFrame, by: str) -> pd.DataFrame:
-    """10th/50th/90th percentile of error for each value of column `by` (index: that value).
+def error_quantiles(errors: pd.DataFrame, by: str, column: str = "error_mw") -> pd.DataFrame:
+    """10th/50th/90th percentile of `column` for each value of column `by` (index: that value).
 
-    Groups with fewer than MIN_BAND_SAMPLES errors are left out (callers fall back to all).
+    Groups with fewer than MIN_BAND_SAMPLES rows are left out (callers fall back to all).
     """
-    grouped = errors.groupby(by, observed=True)["error_mw"]
+    grouped = errors.groupby(by, observed=True)[column]
     quantiles = pd.DataFrame(
         {
             "q_low": grouped.quantile(BAND_LOW_Q),
@@ -304,6 +304,31 @@ def error_quantiles_by_hour(errors: pd.DataFrame) -> pd.DataFrame:
     return error_quantiles(errors, "hour")
 
 
+def group_quantiles(
+    keys: pd.Series, history: pd.DataFrame, by: str, column: str = "error_mw"
+) -> tuple[pd.Series, pd.Series, pd.Series] | None:
+    """10th/50th/90th percentile of `column` in each row's group (`keys` matches `by`).
+
+    A group with too few rows uses all of `history` instead. None if `history` is too small.
+    """
+    if len(history) < MIN_BAND_SAMPLES:
+        return None
+    quantiles = error_quantiles(history, by, column)
+    overall = history[column].quantile([BAND_LOW_Q, BAND_MID_Q, BAND_HIGH_Q]).to_numpy()
+    keys = pd.Series(keys.to_numpy(), index=keys.index, dtype=object)
+    return tuple(
+        keys.map(quantiles[col].to_dict()).astype(float).fillna(overall[i])
+        for i, col in enumerate(("q_low", "q_mid", "q_high"))
+    )
+
+
+def no_band(forecast: pd.DataFrame) -> pd.DataFrame:
+    out = forecast.copy()
+    for col in ("expected_mw", "low_mw", "high_mw"):
+        out[col] = np.nan
+    return out
+
+
 def apply_error_band(
     forecast: pd.DataFrame, keys: pd.Series, history: pd.DataFrame, by: str
 ) -> pd.DataFrame:
@@ -317,18 +342,11 @@ def apply_error_band(
     A group with too few past errors uses all of them instead; with too little history overall
     no range is given. Wind output cannot be negative, so values are clipped at zero.
     """
+    q = None if forecast.empty else group_quantiles(keys, history, by)
+    if q is None:
+        return no_band(forecast)
+    q_low, q_mid, q_high = (s.set_axis(forecast.index) for s in q)
     out = forecast.copy()
-    if len(history) < MIN_BAND_SAMPLES or out.empty:
-        for col in ("expected_mw", "low_mw", "high_mw"):
-            out[col] = np.nan
-        return out
-    quantiles = error_quantiles(history, by)
-    overall = history["error_mw"].quantile([BAND_LOW_Q, BAND_MID_Q, BAND_HIGH_Q]).to_numpy()
-    keys = pd.Series(keys.to_numpy(), index=out.index, dtype=object)
-    lookup = {col: quantiles[col].to_dict() for col in ("q_low", "q_mid", "q_high")}
-    q_low = keys.map(lookup["q_low"]).astype(float).fillna(overall[0])
-    q_mid = keys.map(lookup["q_mid"]).astype(float).fillna(overall[1])
-    q_high = keys.map(lookup["q_high"]).astype(float).fillna(overall[2])
     out["expected_mw"] = (out["forecast_mw"] - q_mid).clip(lower=0)
     out["low_mw"] = (out["forecast_mw"] - q_high).clip(lower=0)
     out["high_mw"] = (out["forecast_mw"] - q_low).clip(lower=0)
