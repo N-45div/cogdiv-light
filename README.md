@@ -81,6 +81,19 @@ cd frontend && npm run lint && npm run typecheck && npm test && npm run build
 
 CI runs all of these, then builds the Docker image and smoke-tests it (`.github/workflows/ci.yml`).
 
+### Live checks (need internet)
+
+```bash
+cd backend && CLOCK_MODE=live uvicorn wind_monitor.main:app      # terminal 1
+python scripts/live_check.py                                     # planning API on real Elexon data
+BASETEN_API_KEY=... python scripts/model_check.py --api http://localhost:8000   # model providers
+python scripts/compare_corrections.py --live                     # offset vs ratio correction
+```
+
+`model_check.py` checks each provider whose key is set (`MODEL_API_KEY` for Muse Spark on the
+Meta Model API, `BASETEN_API_KEY` for Muse Spark Open): the model is listed, replies, calls a
+tool, and answers from a real plan.
+
 ### Refreshing the data
 
 The app serves a snapshot of the January 2026 data committed in `backend/data/`. That data is
