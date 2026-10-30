@@ -94,6 +94,27 @@ python scripts/compare_corrections.py --live                     # offset vs rat
 Meta Model API, `BASETEN_API_KEY` for Muse Spark Open): the model is listed, replies, calls a
 tool, and answers from a real plan.
 
+```bash
+python scripts/backtest.py [--live]          # charging strategies vs actual wind, night by night
+MODEL_API_KEY=... python scripts/agent_eval.py   # the real agent on 27 January nights
+```
+
+Results are in [docs/DECISIONS.md](docs/DECISIONS.md) (C9).
+
+### The agent
+
+Set `MODEL_API_KEY` (Meta Model API) and/or `BASETEN_API_KEY`, start the API, then:
+
+```bash
+curl -s localhost:8000/api/agent/ask -H 'content-type: application/json' \
+  -d '{"question": "My EV needs 21 kWh at 7 kW by 07:00. When should it charge?"}'
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PLANNER_MODELS` | `meta:muse-spark-1.3,baseten:meta-models/muse-spark-open-1026` | Models for the agent, tried in order |
+| `PLANNER_REASONING_EFFORT` | `low` | How long models think (Meta and Baseten) |
+
 ### Refreshing the data
 
 The app serves a snapshot of the January 2026 data committed in `backend/data/`. That data is
@@ -171,6 +192,8 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 | `GET /api/clock`, `POST /api/clock` | The planning clock; in replay mode, jump, step or change speed |
 | `GET /api/outlook?hours=24` | Forecast as of the clock, bias-corrected with a likely range, and how actual wind has tracked it recently |
 | `POST /api/plan` | Schedule a flexible job (kWh, kW, deadline) into the windiest half-hours |
+| `POST /api/agent/ask` | Ask the agent (Muse Spark); every figure in its answer is fact-checked against its tool results |
+| `GET /api/agent/runs`, `GET /api/agent/runs/{id}` | Log of agent runs: answer, check, models used, every tool call |
 
 Interactive documentation: `/api/docs`.
 
