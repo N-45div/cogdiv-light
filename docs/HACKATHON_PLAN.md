@@ -5,6 +5,18 @@ Meta Global AI Developer Hackathon, building period Oct 27 – Nov 4, 2026.
 
 Track: **Push the Frontier** (energy; "control a physical system").
 
+## 0. Progress
+
+- **Day 1 (Oct 29), done:** planning clock (live / January replay), outlook with a ratio correction
+  (docs/DECISIONS.md C1-C6), live Elexon window, scheduler, `/api/clock`, `/api/outlook`, `/api/plan`,
+  live end-to-end checks.
+- **Day 2 (Oct 30), done:** agent on Muse Spark with tools, fact checker and one rewrite; model
+  client with fallback (Meta -> Baseten); `/api/agent/ask` and run log; backtest; agent evaluation
+  (27/27 nights verified on both Muse Spark 1.3 and Muse Spark Open). Results: DECISIONS C7-C9.
+- **Changed by the results:** re-planning on new forecast runs does not improve overnight charging
+  (C9), so the watcher's job is to spot wind under-delivering and alert/pause, not to chase a better
+  charging score. Muse Glimmer is not on the Meta Model API: it runs on our own Modal GPU.
+
 ---
 
 ## 1. The pitch
@@ -33,10 +45,11 @@ Pitch line: *"An agent that knows how far to trust the wind forecast, and a $10 
 | **Muse Glimmer (30B, open weights)** | Our own GPU on **Modal** (vLLM, scales to zero) | Always-on watcher: every 30 min compares actuals with the plan; escalates to Spark only when something changed. Targets the *Best Build on Meta Open Weight Models* bonus. |
 | **Muse Voice Transcribe** | Meta Model API (REST, 16 kHz mono WAV) | Voice commands from the device mic ("car needs charging by 7"). |
 | **SAM 3.1** | Meta Model API | Finds the meter display / appliance in the camera frame, so Spark reads a clean crop. |
-| **Muse Spark Open** | Baseten (hosted) | Fallback watcher with zero infra; optional model bake-off on the January backtest. |
+| **Muse Spark Open** | Baseten (hosted) | Backup planner and watcher, already tested (2.4 s per question). |
 | **Muse Code** | Our laptops | Used to write firmware/backend; mention in the submission. |
 
-Fireworks credits: keep as a backup provider only. Do not spread work across providers.
+Fireworks: backup provider for Muse Spark Open, and the stretch goal of fine-tuning Muse Glimmer
+there (Glimmer SFT is free on Fireworks until Nov 30). Do not spread work across providers.
 
 **Design rule:** the LLM never does the arithmetic. Scheduling and scoring are deterministic Python
 tools (tested); the agent decides *what* to ask, *when* to re-plan, and explains *why*.
@@ -172,15 +185,15 @@ replay mode, video.
 - [ ] 3-minute video, public link
 - [ ] X post with the demo, link submitted (Most Viral bonus counts engagement until Nov 8)
 
-## 8. Open items to verify on day 1
+## 8. API details, checked against the real services (Oct 29-30)
 
-The cloud sandbox could not reach the docs sites, so these come from search results and need checking:
-
-- Meta Model API: base URL `https://api.meta.ai/v1`, OpenAI-style chat completions, model id
-  `muse-spark-1.3`, key in `MODEL_API_KEY`
-- Voice Transcribe: `POST /v1/asr/transcribe`, mono 16-bit PCM WAV at 16 or 24 kHz
-- SAM 3.1: model `sam-3.1` via `POST /v1/responses`, short noun-phrase prompt, returns boxes + masks
-- Baseten: `https://inference.baseten.co/v1`, slug `meta-models/muse-spark-open-1026` (per the hackathon
-  guide); structured output may not be supported for this model, which is fine since schedules come from
-  our code
-- Muse Glimmer: Hugging Face id, vLLM support, 4-bit build fits a 24 GB GPU
+- Meta Model API: `https://api.meta.ai/v1`, OpenAI-style Chat Completions, key in `MODEL_API_KEY`.
+  The key sees `muse-spark-1.3`, `muse-wonder-1.0`, `muse-image-1.0`, `muse-voice-transcribe-1.0`,
+  `sam-3.1`. Tool calling works; `reasoning_effort: low` cuts answers to 4-7 s.
+- Baseten: `https://inference.baseten.co/v1`, model `meta-models/muse-spark-open-1026`; tool calling
+  and `reasoning_effort` work; replies carry `reasoning_content`.
+- Muse Glimmer: not on the Meta Model API. Weights `meta-models/Muse-Glimmer-30B` on Hugging Face
+  (not gated, Apache 2.0); vLLM image `vllm/vllm-openai:muse-glimmer`, needs ~72 GB VRAM at bf16;
+  17-20 GB quantized builds for llama.cpp.
+- Still to check when used: Voice Transcribe (`POST /v1/asr/transcribe`, 16 or 24 kHz mono WAV) and
+  SAM 3.1 (`POST /v1/responses` with model `sam-3.1`).
