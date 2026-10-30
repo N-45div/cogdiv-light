@@ -18,9 +18,17 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import time, timedelta
 
 import pandas as pd
 
+from . import analysis as an
+from . import config
+
+# Plans reach at most this far ahead: about the horizon of a WINDFOR run.
+MAX_PLAN_HOURS = 48
+# Without a deadline, a job must be done by the next 07:00 UK time (an overnight charge).
+DEFAULT_DEADLINE = time(7, 0)
 SLOT = pd.Timedelta(minutes=30)
 SLOT_HOURS = 0.5
 BASIS_COLUMNS = {"raw": "forecast_mw", "expected": "expected_mw", "cautious": "low_mw"}
@@ -69,6 +77,15 @@ class Plan:
     @property
     def feasible(self) -> bool:
         return self.shortfall_kwh < 1e-6
+
+
+def next_uk_time(after: pd.Timestamp, at: time) -> pd.Timestamp:
+    """The first time-of-day `at` (UK local) strictly after `after`."""
+    day = after.tz_convert(config.UK_TZ).date()
+    candidate = an.uk_moment(day, at)
+    if candidate <= after:
+        candidate = an.uk_moment(day + timedelta(days=1), at)
+    return candidate
 
 
 def slots_for(

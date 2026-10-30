@@ -7,7 +7,6 @@ moment in January 2026 (no look-ahead), and in live mode they use real time and 
 from __future__ import annotations
 
 import math
-from datetime import time, timedelta
 from typing import Annotated
 
 import pandas as pd
@@ -17,16 +16,22 @@ from . import analysis as an
 from . import config
 from . import outlook as ol
 from .clock import Clock, as_utc, get_clock
-from .flex import FlexJob, Plan, blocks, plan_load, wind_during
+from .flex import (
+    DEFAULT_DEADLINE,
+    MAX_PLAN_HOURS,
+    FlexJob,
+    Plan,
+    blocks,
+    next_uk_time,
+    plan_load,
+    wind_during,
+)
 from .schemas import ClockOut, ClockUpdate, OutlookView, PlanRequest, PlanView
 from .store import WindData, get_live_window, get_wind_data
 
 router = APIRouter(prefix="/api")
 
 ClockDep = Annotated[Clock, Depends(get_clock)]
-# Plans reach at most this far ahead: about the horizon of a WINDFOR run.
-MAX_PLAN_HOURS = 48
-DEFAULT_DEADLINE = time(7, 0)
 
 
 def planning_data(clock: ClockDep) -> WindData:
@@ -130,15 +135,6 @@ def outlook_view(
 
 
 # ---- plans ------------------------------------------------------------------------------
-
-
-def next_uk_time(after: pd.Timestamp, at: time) -> pd.Timestamp:
-    """The first time-of-day `at` (UK local) strictly after `after`."""
-    day = after.tz_convert(config.UK_TZ).date()
-    candidate = an.uk_moment(day, at)
-    if candidate <= after:
-        candidate = an.uk_moment(day + timedelta(days=1), at)
-    return candidate
 
 
 def _wind(slots: pd.DataFrame) -> dict:
