@@ -282,6 +282,19 @@ Planning flexible demand around the wind, for the agent and the ESP32 device. Se
   | Muse Spark 1.3 (Meta Model API) | 27/27 | 0/27 | 27/27 | 4.0 s |
   | Muse Spark Open (Baseten) | 27/27 | 0/27 | 27/27 | 2.4 s |
 
+### C10. The device: the server decides, the device obeys (and fails safe)
+
+- **Context:** an ESP32-S3 with a 1.8" screen and one button shows the plan and switches a load.
+- **Decision:**
+  - **The server owns the logic and the words.** The device polls `GET /api/device/{id}/state` every 5 s and draws what it gets: a mode, a title, up to six lines of at most 21 characters, a button prompt, and `relay` on/off. Screen text is built by code from the planner's results (`device.py`), never by the model.
+  - **Only checked plans reach a device.** A proposal must come from a verified agent run with a feasible plan; the person approves it with the button (*hold: yes / tap: no*).
+  - **The relay follows the planning clock.** It is on inside an approved plan's windows and off outside them, so in replay mode a fast-forward drives the real relay (the demo).
+  - **Fail safe:** if the server can't be reached for 10 minutes, the device switches the relay off.
+  - **No secrets in the firmware.** Wi-Fi, server URL and device token are entered from a phone on first boot (WiFiManager hotspot), so one prebuilt image works for anyone and can be flashed from a browser.
+  - **Pins come from the vendor's firmware.** The board's shipped firmware is XiaoZhi v2.2.2 built for the `bread-compact-wifi-s3cam` config; its `config.h` gives the screen, button, mic, speaker and camera pins, and a spare pin (GPIO 14) for the relay.
+- **Trade-offs:** polling, not push (simple, works through any network; 5 s latency is fine for charging). Over HTTPS the device doesn't check the server certificate yet (`setInsecure()`); pin a root CA before real use. Device tokens are optional (`DEVICE_TOKENS`), for local development.
+- **Code:** `device.py`, `device_api.py`, `firmware/src/main.cpp`; tests in `test_device.py`, `test_device_api.py`; `scripts/device_sim.py` stands in for the board in end-to-end runs.
+
 ---
 
 ## What I would do next

@@ -13,6 +13,11 @@ Track: **Push the Frontier** (energy; "control a physical system").
 - **Day 2 (Oct 30), done:** agent on Muse Spark with tools, fact checker and one rewrite; model
   client with fallback (Meta -> Baseten); `/api/agent/ask` and run log; backtest; agent evaluation
   (27/27 nights verified on both Muse Spark 1.3 and Muse Spark Open). Results: DECISIONS C7-C9.
+- **Day 3 (Oct 30), done:** device API (proposals, hold/tap approval, relay by the planning clock,
+  device tokens), device simulator, full loop run end to end in replay (agent -> device -> relay on
+  19:00, off 22:00). Firmware for the OceanLabz board (pins from its shipped XiaoZhi config), built
+  in CI, prebuilt image for browser flashing, phone Wi-Fi setup (DECISIONS C10). Not yet run on the
+  real board: needs flashing from the laptop (firmware/README.md).
 - **Changed by the results:** re-planning on new forecast runs does not improve overnight charging
   (C9), so the watcher's job is to spot wind under-delivering and alert/pause, not to chase a better
   charging score. Muse Glimmer is not on the Meta Model API: it runs on our own Modal GPU.

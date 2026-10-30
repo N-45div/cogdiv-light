@@ -165,6 +165,10 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 │       ├── components/          Stat tiles, chart cards with table view, controls
 │       ├── lib/                 Formatting (UK time), CSV export, data hooks, insight maths (+ tests)
 │       └── index.css            Design tokens (light/dark) and layout
+├── firmware/                    ESP32-S3 device (PlatformIO): plan screen, button, relay; see firmware/README.md
+│   ├── src/main.cpp             Polls the device API, draws the screen, tap/hold, relay, phone Wi-Fi setup
+│   ├── include/board.h          Pins of the OceanLabz ESP32-S3 AI Explorer camera board
+│   └── dist/                    Prebuilt image to flash from the browser
 ├── api/index.py                 Vercel entry point: exposes the FastAPI app as a serverless function
 ├── vercel.json                  Vercel build and routing (/api/* → Python, everything else → React)
 ├── Dockerfile                   Multi-stage image: build React, then serve API + site with Python
@@ -194,6 +198,9 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 | `POST /api/plan` | Schedule a flexible job (kWh, kW, deadline) into the windiest half-hours |
 | `POST /api/agent/ask` | Ask the agent (Muse Spark); every figure in its answer is fact-checked against its tool results |
 | `GET /api/agent/runs`, `GET /api/agent/runs/{id}` | Log of agent runs: answer, check, models used, every tool call |
+| `GET /api/device/{id}/state` | For the ESP32: what to show, and whether its load should be on now |
+| `POST /api/device/{id}/event` | Button presses (approve, reject, stop) and telemetry from the device |
+| `POST /api/device/{id}/propose`, `GET /api/devices` | Send an agent plan to a device; list devices |
 
 Interactive documentation: `/api/docs`.
 
