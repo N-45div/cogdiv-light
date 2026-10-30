@@ -304,3 +304,57 @@ class PlanView(BaseModel):
     forecast_run: datetime | None = Field(None, description="Newest forecast run used")
     notes: list[str]
     slots: list[PlanSlot]
+
+
+# ---- agent ------------------------------------------------------------------------------
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500, description="What to ask the agent")
+
+
+class FactCheckClaim(BaseModel):
+    text: str = Field(description="The figure as written in the answer")
+    kind: str = Field(description="'time' or 'number'")
+    supported: bool
+    source: str | None = Field(None, description="The tool value it matched")
+
+
+class FactCheckOut(BaseModel):
+    passed: bool
+    summary: str = Field(description="e.g. 'facts checked 5/5' or '2 facts don't match'")
+    claims: list[FactCheckClaim]
+
+
+class ToolCallOut(BaseModel):
+    name: str
+    arguments: dict | str | None
+    result: dict
+
+
+class AgentRunOut(BaseModel):
+    id: str
+    question: str
+    as_of: str = Field(description="The clock time the agent planned at")
+    mode: str
+    answer: str | None
+    verified: bool = Field(description="Every figure in the answer matched a tool result")
+    factcheck: FactCheckOut | None
+    models: list[str] = Field(description="Model behind each call, e.g. 'meta:muse-spark-1.3'")
+    tool_calls: list[ToolCallOut]
+    plan: dict | None = Field(None, description="The last plan_charge result, if any")
+    rewrites: int
+    seconds: float
+    error: str | None
+    failed_models: list[dict]
+
+
+class AgentRunSummary(BaseModel):
+    id: str
+    question: str
+    as_of: str
+    answer: str | None
+    verified: bool
+    summary: str | None
+    models: list[str]
+    seconds: float
