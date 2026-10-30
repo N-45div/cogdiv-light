@@ -124,9 +124,13 @@ def figures(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, float, in
 
 
 def _flatten(value, path: str) -> Iterator[tuple[str, object]]:
+    """(path, value) for every leaf, plus each dict key as text: keys carry figures too
+    (e.g. "6-12h ahead": 89)."""
     if isinstance(value, dict):
         for key, item in value.items():
-            yield from _flatten(item, f"{path}.{key}" if path else str(key))
+            child = f"{path}.{key}" if path else str(key)
+            yield child, str(key)
+            yield from _flatten(item, child)
     elif isinstance(value, list):
         for i, item in enumerate(value):
             yield from _flatten(item, f"{path}[{i}]")
