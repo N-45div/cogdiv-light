@@ -241,6 +241,47 @@ Planning flexible demand around the wind, for the agent and the ESP32 device. Se
 - **What it doesn't change:** which hours look windiest. Scaling every hour by about the same ratio keeps their order, so plans barely move (January preview: 12,648 vs 12,636 MW). It fixes the numbers the agent and the device *show*, and the "how short will the desk be" sum.
 - **Code:** `outlook.ratio_band`, `analysis.group_quantiles`; `test_outlook.py::test_correction_scales_with_the_wind`.
 
+### C7. The agent: tools that pre-digest, a fact checker, one rewrite
+
+- **Context:** the agent answers questions like "when should my car charge?" with Meta's models. A language model can misquote or invent figures, and a wrong figure on a device screen is worse than none.
+- **Decision:**
+  - **Tools pre-digest.** `get_wind_outlook`, `plan_charge` and `check_recent_wind` return whole numbers, UK times, and every comparison worth saying (e.g. `more_wind_than_charging_straight_away_pct`), so the model never computes; it quotes.
+  - **Every figure is checked.** Before an answer counts, each time and number in it must match a tool result or the user's question, allowing honest rounding (6,600 MW or 6.6 GW for 6,628, not 7,200). The checker reads dict keys too ("6-12h ahead").
+  - **One rewrite.** If figures don't match, the model is told which and asked to rewrite once. If it still fails, the run is marked unverified, and a plan from an unverified run is never dispatched.
+  - **Everything is recorded:** models, tool calls and results, the check, timings (`GET /api/agent/runs`).
+- **Why:** this makes the agent *verifiable* rather than just plausible, and every number on the device traceable to tested code.
+- **Code:** `agent/tools.py`, `agent/factcheck.py`, `agent/runner.py`; tests in `test_agent_tools.py`, `test_factcheck.py` (real Muse answers), `test_agent_runner.py`.
+
+### C8. One client for every provider, with fallback
+
+- **Decision:** Meta Model API, Baseten, Fireworks and our own vLLM server all speak OpenAI-style Chat Completions, so a model is just `provider:model`. Each job has an ordered list (`PLANNER_MODELS`, default `meta:muse-spark-1.3,baseten:meta-models/muse-spark-open-1026`); the first with a key answers, and on a network error, rate limit or server error the next one does. Requests ask for `reasoning_effort: low` from providers tested to accept it.
+- **Why low effort:** on 30 Oct Muse Spark 1.3 answered in 4-7 s instead of 11-23 s, with every answer still passing the fact check.
+- **Code:** `agent/llm.py`; tests in `test_llm.py`.
+
+### C9. Results: what planning gains, and what re-planning doesn't
+
+- **Backtest** (`scripts/backtest.py`): each night a car plugs in at 18:00 needing 21 kWh at 7 kW by 07:00. Score = actual GB wind output while it charged.
+
+  | Strategy | January (27 nights) | Oct 2026, live (25 nights) |
+  |---|---|---|
+  | Charge at plug-in | 11,877 MW | 10,687 MW |
+  | Fixed midnight timer | 10,998 MW (-7.4%) | 10,887 MW (+1.9%) |
+  | Plan once, raw forecast | 12,535 MW (+5.5%) | 11,966 MW (+12.0%) |
+  | Plan once, corrected | 12,524 MW (+5.4%) | 11,978 MW (+12.1%) |
+  | Re-plan on each new run | 12,543 MW (+5.6%) | 11,942 MW (+11.7%) |
+  | Hindsight (best possible) | 12,798 MW (+7.8%) | 12,158 MW (+13.8%) |
+
+- **Findings:**
+  - Planning catches **70-88% of the gain perfect hindsight could get**, and beats a fixed midnight timer by 14% in January and 10% in October.
+  - **Re-planning on fresher forecasts doesn't help overnight charging** (within 0.4% of planning once, for both charge sizes). The test `test_backtest.py::test_each_strategy_on_one_night` shows the mechanism works when a forecast changes its mind; on real nights the hour ranking rarely changes enough to matter. So the watcher's value isn't a better charging score; it is noticing when wind under-delivers (which leaves the supplier short) and saying so.
+  - The ratio correction (C6) barely changes which hours win; its value is the honest numbers shown.
+- **Agent evaluation** (`scripts/agent_eval.py`, January replay, 27 nights, three wordings of the question):
+
+  | Model | Verified | Needed a rewrite | Right plan | Median time |
+  |---|---|---|---|---|
+  | Muse Spark 1.3 (Meta Model API) | 27/27 | 0/27 | 27/27 | 4.0 s |
+  | Muse Spark Open (Baseten) | 27/27 | 0/27 | 27/27 | 2.4 s |
+
 ---
 
 ## What I would do next
