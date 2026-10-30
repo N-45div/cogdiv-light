@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from wind_monitor import config
-from wind_monitor.clock import LiveClock, ReplayClock, as_utc, make_clock
+from wind_monitor.clock import LiveClock, ReplayClock, SwitchableClock, as_utc, make_clock
 
 START = pd.Timestamp("2026-01-14T09:00Z")
 
@@ -84,12 +84,24 @@ def test_replay_rejects_times_and_speeds_outside_the_limits(at, speed):
     assert clock.now() == START  # a rejected change leaves the clock as it was
 
 
-def test_settings_pick_the_clock():
+def test_settings_pick_the_starting_mode():
     settings = config.Settings.from_env()
-    assert isinstance(make_clock(replace(settings, clock_mode="live")), LiveClock)
+    assert make_clock(replace(settings, clock_mode="live")).mode == "live"
     replay = make_clock(replace(settings, clock_mode="replay", replay_start=START))
-    assert isinstance(replay, ReplayClock)
+    assert replay.mode == "replay"
     assert replay.now() == START
+
+
+def test_switching_modes_keeps_the_replay_position():
+    clock = SwitchableClock(ReplayClock(START, wall=FakeWall()), "replay")
+    clock.advance(pd.Timedelta(hours=2))
+    clock.switch("live")
+    assert clock.mode == "live" and clock.state()["mode"] == "live"
+    assert clock.now() > pd.Timestamp("2026-06-01T00:00Z")  # real time
+    clock.switch("replay")
+    assert clock.now() == START + pd.Timedelta(hours=2)
+    with pytest.raises(ValueError):
+        clock.switch("tomorrow")
 
 
 def test_settings_read_clock_from_environment(monkeypatch):

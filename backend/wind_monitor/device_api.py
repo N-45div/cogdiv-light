@@ -7,6 +7,7 @@ without it (local development) any device id is accepted.
 
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Annotated
 
@@ -16,7 +17,7 @@ from . import outlook as ol
 from .agent.runs import RunLog, get_run_log
 from .config import UK_TZ
 from .device import DeviceError, DeviceRegistry, DeviceState, get_registry, relay_on, screen
-from .planning_api import ClockDep, PlanningDataDep
+from .planning_api import ClockDep, PlanningDataDep, require_app_token
 from .schemas import (
     DEVICE_ID_PATTERN,
     DeviceEvent,
@@ -43,7 +44,7 @@ def authorised_device(
     device_id: DeviceId, x_device_token: Annotated[str | None, Header()] = None
 ) -> str:
     tokens = device_tokens()
-    if tokens and tokens.get(device_id) != x_device_token:
+    if tokens and not hmac.compare_digest(tokens.get(device_id, ""), x_device_token or "\0"):
         raise HTTPException(401, "Unknown device or wrong X-Device-Token")
     return device_id
 
@@ -90,7 +91,11 @@ def device_event(
     return view(state, now, data)
 
 
-@router.post("/device/{device_id}/propose", response_model=DeviceView)
+@router.post(
+    "/device/{device_id}/propose",
+    response_model=DeviceView,
+    dependencies=[Depends(require_app_token)],
+)
 def propose(
     device_id: DeviceId,
     request: ProposeRequest,
