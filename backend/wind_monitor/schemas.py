@@ -311,6 +311,11 @@ class PlanView(BaseModel):
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500, description="What to ask the agent")
+    device_id: str | None = Field(
+        None,
+        pattern=r"^[a-z0-9-]{1,32}$",
+        description="Send a verified plan to this device to approve",
+    )
 
 
 class FactCheckClaim(BaseModel):
@@ -350,6 +355,7 @@ class AgentRunOut(BaseModel):
     seconds: float
     error: str | None
     failed_models: list[dict]
+    proposed_to: str | None = Field(None, description="Device the plan was sent to, if any")
 
 
 class AgentRunSummary(BaseModel):
@@ -361,3 +367,48 @@ class AgentRunSummary(BaseModel):
     summary: str | None
     models: list[str]
     seconds: float
+
+
+# ---- devices ----------------------------------------------------------------------------
+
+DEVICE_ID_PATTERN = r"^[a-z0-9-]{1,32}$"
+
+
+class DeviceEvent(BaseModel):
+    type: str = Field(
+        pattern="^(approve|reject|stop|telemetry)$",
+        description="approve/reject a proposal (hold/tap), stop the active plan, or telemetry",
+    )
+    proposal_id: str | None = Field(None, description="For approve/reject: which proposal")
+    relay: bool | None = Field(None, description="Telemetry: relay as the device has it")
+    rssi: int | None = Field(None, description="Telemetry: Wi-Fi signal, dBm")
+    uptime_s: int | None = None
+    firmware: str | None = None
+
+
+class ProposeRequest(BaseModel):
+    run_id: str = Field(description="A verified agent run with a feasible plan")
+
+
+class DeviceView(BaseModel):
+    device_id: str
+    now: str = Field(description="Planning clock, UTC ISO")
+    now_uk: str = Field(description="Planning clock, UK time HH:MM")
+    version: int = Field(description="Bumps on every state change: redraw when it changes")
+    relay: bool = Field(description="Should the load be on right now")
+    mode: str = Field(description="idle, proposal, waiting, charging or done")
+    title: str
+    lines: list[str] = Field(description="Up to six lines of at most 21 characters")
+    prompt: str | None = Field(None, description="Button hint, e.g. 'hold:yes  tap:no'")
+    proposal_id: str | None = Field(None, description="Send this back with approve/reject")
+    poll_seconds: int
+
+
+class DeviceSummary(BaseModel):
+    device_id: str
+    last_seen: str | None
+    version: int
+    proposal_id: str | None
+    active_id: str | None
+    telemetry: dict
+    events: list[dict]

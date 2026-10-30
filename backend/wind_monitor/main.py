@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .agent_api import router as agent_router
 from .api import router
 from .config import Settings
+from .device_api import router as device_router
 from .planning_api import router as planning_router
 from .store import DataUnavailableError
 
@@ -41,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(router)
     app.include_router(planning_router)
     app.include_router(agent_router)
+    app.include_router(device_router)
 
     @app.exception_handler(DataUnavailableError)
     async def data_unavailable(request: Request, exc: DataUnavailableError) -> JSONResponse:

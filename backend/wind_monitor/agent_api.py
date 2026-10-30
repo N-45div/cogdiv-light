@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from .agent.llm import ChatClient, client_for
 from .agent.runner import run_agent
 from .agent.runs import RunLog, get_run_log
+from .device import DeviceRegistry, get_registry
 from .planning_api import ClockDep, PlanningDataDep
 from .schemas import AgentRunOut, AgentRunSummary, AskRequest
 
@@ -24,6 +25,7 @@ def get_planner() -> ChatClient:
 
 PlannerDep = Annotated[ChatClient, Depends(get_planner)]
 RunLogDep = Annotated[RunLog, Depends(get_run_log)]
+RegistryDep = Annotated[DeviceRegistry, Depends(get_registry)]
 
 
 @router.post("/ask", response_model=AgentRunOut)
@@ -33,16 +35,26 @@ def ask(
     clock: ClockDep,
     planner: PlannerDep,
     log: RunLogDep,
+    registry: RegistryDep,
 ) -> dict:
     """Ask the agent. It calls the planning tools, answers, and has every figure fact-checked.
-    The full record (models, tool calls, check) is returned and kept in the run log."""
+    The full record (models, tool calls, check) is returned and kept in the run log. With a
+    device_id, a verified feasible plan is sent to that device to approve."""
     if not planner.available():
         raise HTTPException(503, "No model is configured: set MODEL_API_KEY or BASETEN_API_KEY")
-    run = run_agent(request.question, data, clock.now(), planner, mode=clock.mode)
+    now = clock.now()
+    run = run_agent(request.question, data, now, planner, mode=clock.mode)
     log.add(run)
     if run.answer is None:
         raise HTTPException(503, f"The agent could not answer: {run.error}")
-    return run.as_dict()
+    proposed_to = None
+    if request.device_id:
+        try:
+            registry.propose(request.device_id, run, now)
+            proposed_to = request.device_id
+        except ValueError:
+            pass  # unverified or no plan: nothing is sent; the run says why
+    return {**run.as_dict(), "proposed_to": proposed_to}
 
 
 @router.get("/runs", response_model=list[AgentRunSummary])
