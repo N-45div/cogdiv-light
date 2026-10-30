@@ -43,6 +43,24 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  firmware:
+    name: Firmware (ESP32-S3 build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ hashFiles('firmware/platformio.ini') }}
+      - run: pip install platformio==6.2.0
+      - run: pio run
+
   docker:
     name: Docker image (build + smoke test)
     runs-on: ubuntu-latest
