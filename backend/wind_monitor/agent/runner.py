@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, field
 
 import pandas as pd
 
+from ..flex import blocks
 from ..store import WindData
 from . import factcheck
 from .llm import ChatClient, ModelUnavailableError
@@ -56,6 +57,8 @@ class AgentRun:
     models: list[str] = field(default_factory=list)  # model used for each model call, in order
     tool_calls: list[dict] = field(default_factory=list)
     plan: dict | None = None  # the last plan_charge result, if any
+    # That plan's charging windows as exact times (UTC ISO), for a device to act on.
+    schedule: list[dict] = field(default_factory=list)
     rewrites: int = 0
     seconds: float = 0.0
     error: str | None = None
@@ -124,5 +127,14 @@ def run_agent(
     run.tool_calls = toolbox.calls
     plans = [c["result"] for c in toolbox.calls if c["name"] == "plan_charge"]
     run.plan = next((p for p in reversed(plans) if "error" not in p), None)
+    if run.plan is not None and toolbox.last_plan is not None:
+        run.schedule = [
+            {
+                "start": b["start"].isoformat(),
+                "end": b["end"].isoformat(),
+                "energy_kwh": round(b["energy_kwh"], 3),
+            }
+            for b in blocks(toolbox.last_plan.slots)
+        ]
     run.seconds = round(time.monotonic() - start, 2)
     return run
