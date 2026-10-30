@@ -295,6 +295,15 @@ Planning flexible demand around the wind, for the agent and the ESP32 device. Se
 - **Trade-offs:** polling, not push (simple, works through any network; 5 s latency is fine for charging). Over HTTPS the device doesn't check the server certificate yet (`setInsecure()`); pin a root CA before real use. Device tokens are optional (`DEVICE_TOKENS`), for local development.
 - **Code:** `device.py`, `device_api.py`, `firmware/src/main.cpp`; tests in `test_device.py`, `test_device_api.py`; `scripts/device_sim.py` stands in for the board in end-to-end runs.
 
+### C11. Deployment: one always-on Modal container, deployed from GitHub
+
+- **Context:** the device, the agent's run log and the replay clock keep state in memory, and the board needs a public `https://` address.
+- **Options:** (a) Vercel serverless (already configured for the January views); (b) one long-running container on Modal; (c) add a shared store (Redis, Modal Dict) and run anywhere.
+- **Decision:** **(b)**. `deploy/modal_app.py` runs the FastAPI app with `min_containers=1, max_containers=1`, so every request reaches the same process. `.github/workflows/deploy.yml` deploys after CI passes on `main`, copying the app's keys from repository secrets into a Modal secret, then checks the live URL answers. `APP_TOKEN` guards the endpoints that cost money or change shared state; `DEVICE_TOKENS` guards the device endpoints. The clock can switch between live and replay at runtime, so one deployment serves both the real-time device and the replay demo.
+- **Why:** serverless copies don't share memory, so a proposal made on one could be invisible to the device polling another. One container is plenty for a few devices, and Modal is the hackathon's partner (credits; Muse Glimmer can run there later).
+- **Trade-offs:** a redeploy clears the in-memory state (the device simply shows *Wind now* until the next plan); a shared store (option c) is the fix if that matters. One container is a ceiling on scale, by design for now.
+- **Code:** `deploy/modal_app.py`, `.github/workflows/deploy.yml`; `planning_api.require_app_token`, `clock.SwitchableClock`; guide in `docs/DEPLOYMENT.md`.
+
 ---
 
 ## What I would do next

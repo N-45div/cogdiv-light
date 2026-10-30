@@ -18,6 +18,10 @@ Track: **Push the Frontier** (energy; "control a physical system").
   19:00, off 22:00). Firmware for the OceanLabz board (pins from its shipped XiaoZhi config), built
   in CI, prebuilt image for browser flashing, phone Wi-Fi setup (DECISIONS C10). Not yet run on the
   real board: needs flashing from the laptop (firmware/README.md).
+- **Day 3 (cont.):** deployment from GitHub to Modal (one always-on container, after CI on main;
+  DECISIONS C11), live/replay switch at runtime, `APP_TOKEN` and device tokens. Work is now split:
+  this cloud session owns the server; a Claude Code session on the owner's Windows laptop owns the
+  board (docs/LAPTOP_SESSION.md).
 - **Changed by the results:** re-planning on new forecast runs does not improve overnight charging
   (C9), so the watcher's job is to spot wind under-delivering and alert/pause, not to chase a better
   charging score. Muse Glimmer is not on the Meta Model API: it runs on our own Modal GPU.

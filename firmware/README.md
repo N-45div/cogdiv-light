@@ -46,7 +46,12 @@ To change any of this later: hold **BOOT** for 10 seconds.
 
 ## 3. The server
 
-**Until it is deployed (Day 4)**, run the API on the laptop and use the laptop's address:
+**Deployed (normal):** use the URL from the latest *Deploy* run on GitHub (Actions → Deploy →
+summary), e.g. `https://<workspace>--wind-buddy-web.modal.run`, and the device token for
+`desk-1` from the owner's `DEVICE_TOKENS` secret. Commands for the deployed app, including the
+replay demo, are in [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
+
+**Without the deployment**, run the API on the laptop and use the laptop's address:
 
 ```powershell
 cd backend

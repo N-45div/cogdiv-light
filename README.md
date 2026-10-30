@@ -114,6 +114,8 @@ curl -s localhost:8000/api/agent/ask -H 'content-type: application/json' \
 |---|---|---|
 | `PLANNER_MODELS` | `meta:muse-spark-1.3,baseten:meta-models/muse-spark-open-1026` | Models for the agent, tried in order |
 | `PLANNER_REASONING_EFFORT` | `low` | How long models think (Meta and Baseten) |
+| `APP_TOKEN` | unset | If set, asking the agent, moving the clock and proposing to a device need header `X-App-Token` |
+| `DEVICE_TOKENS` | unset | `id:token,...`; if set, each device must send its token in `X-Device-Token` |
 
 ### Refreshing the data
 
@@ -204,12 +206,20 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 
 Interactive documentation: `/api/docs`.
 
-## Deploying to Vercel
+## Deploying
 
-1. Import this GitHub repository at https://vercel.com/new.
-2. Keep the defaults. `vercel.json` sets the build (`frontend/` with Vite), the output directory, and
-   the Python function (`api/index.py`, dependencies from `requirements.txt`).
-3. Deploy. The site is served from Vercel's CDN, and `/api/*` runs FastAPI.
+**The full app (agent, devices, website): Modal, from GitHub.** Every push to `main` that
+passes CI is deployed by `.github/workflows/deploy.yml` to one always-on Modal container
+(`deploy/modal_app.py`). Set-up (repository secrets) and day-to-day commands:
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+**The read-only January views only: Vercel.** Import the repository at https://vercel.com/new
+and keep the defaults (`vercel.json` builds `frontend/` and runs FastAPI as a serverless
+function). Serverless copies don't share memory, so the agent's run log and the devices need
+the Modal deployment.
+
+The device side (flashing the ESP32 from a laptop) is described for a Claude Code session on
+that laptop in [docs/LAPTOP_SESSION.md](docs/LAPTOP_SESSION.md).
 
 ## Use of AI tools
 
