@@ -114,10 +114,49 @@ class ReplayClock:
 MAX_REPLAY_SPEED = 10_000.0
 
 
-def make_clock(settings: config.Settings) -> Clock:
-    if settings.clock_mode == "live":
-        return LiveClock()
-    return ReplayClock(settings.replay_start, speed=settings.replay_speed)
+class SwitchableClock:
+    """Live or replay, switchable while running (POST /api/clock {"mode": ...}).
+
+    The replay keeps its position while live is on, so switching back resumes where it was.
+    Moving the clock (set / advance) always moves the replay.
+    """
+
+    def __init__(self, replay: ReplayClock, mode: str = "replay", live: LiveClock | None = None):
+        self.replay, self.live = replay, live or LiveClock()
+        self._mode = self._checked_mode(mode)
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    def switch(self, mode: str) -> None:
+        self._mode = self._checked_mode(mode)
+
+    def now(self) -> pd.Timestamp:
+        return self._active().now()
+
+    def state(self) -> dict:
+        return self._active().state()
+
+    def set(self, at: datetime | pd.Timestamp | None = None, speed: float | None = None) -> None:
+        self.replay.set(at=at, speed=speed)
+
+    def advance(self, delta: pd.Timedelta) -> None:
+        self.replay.advance(delta)
+
+    def _active(self) -> Clock:
+        return self.live if self._mode == "live" else self.replay
+
+    @staticmethod
+    def _checked_mode(mode: str) -> str:
+        if mode not in config.CLOCK_MODES:
+            raise ValueError(f"Clock mode must be one of {config.CLOCK_MODES}")
+        return mode
+
+
+def make_clock(settings: config.Settings) -> SwitchableClock:
+    replay = ReplayClock(settings.replay_start, speed=settings.replay_speed)
+    return SwitchableClock(replay, settings.clock_mode)
 
 
 # One clock per process, created on first use.

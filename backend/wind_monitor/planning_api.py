@@ -6,11 +6,13 @@ moment in January 2026 (no look-ahead), and in live mode they use real time and 
 
 from __future__ import annotations
 
+import hmac
 import math
+import os
 from typing import Annotated
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from . import analysis as an
 from . import config
@@ -34,6 +36,14 @@ router = APIRouter(prefix="/api")
 ClockDep = Annotated[Clock, Depends(get_clock)]
 
 
+def require_app_token(x_app_token: Annotated[str | None, Header()] = None) -> None:
+    """Guards endpoints that cost money or change shared state (ask the agent, move the clock,
+    send a plan to a device). Set APP_TOKEN on a public deployment; unset, they are open."""
+    expected = os.environ.get("APP_TOKEN")
+    if expected and not hmac.compare_digest(expected, x_app_token or ""):
+        raise HTTPException(401, "Missing or wrong X-App-Token")
+
+
 def planning_data(clock: ClockDep) -> WindData:
     """Replay plans on the January snapshot; live mode on the rolling live window."""
     if clock.mode == "live":
@@ -52,10 +62,15 @@ def read_clock(clock: ClockDep) -> dict:
     return clock.state()
 
 
-@router.post("/clock", response_model=ClockOut)
+@router.post("/clock", response_model=ClockOut, dependencies=[Depends(require_app_token)])
 def move_clock(update: ClockUpdate, clock: ClockDep) -> dict:
-    """Replay only: jump to a time, change speed, or step forward."""
-    if clock.mode != "replay":
+    """Switch between live and replay; in replay, jump to a time, change speed, or step."""
+    if update.mode is not None and update.mode != clock.mode:
+        if not hasattr(clock, "switch"):
+            raise HTTPException(409, "This clock can't switch modes")
+        clock.switch(update.mode)
+    moving = update.at is not None or update.speed is not None or update.advance_minutes
+    if moving and clock.mode != "replay":
         raise HTTPException(409, "The clock can only be moved in replay mode")
     try:
         if update.at is not None or update.speed is not None:

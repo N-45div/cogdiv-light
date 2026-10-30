@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from wind_monitor import planning_api
-from wind_monitor.clock import ReplayClock, get_clock
+from wind_monitor.clock import ReplayClock, SwitchableClock, get_clock
 from wind_monitor.config import Settings
 from wind_monitor.main import create_app
 from wind_monitor.store import WindData
@@ -79,6 +79,34 @@ def test_clock_can_jump_and_step(client):
 def test_clock_rejects_bad_moves(client, update):
     assert client.post("/api/clock", json=update).status_code == 422
     assert client.get("/api/clock").json()["now"] == "2026-01-08T18:00:00Z"
+
+
+def test_clock_switches_between_live_and_replay():
+    data = _data()
+    clock = SwitchableClock(ReplayClock(NOW), "replay")
+    app = create_app(replace(Settings.from_env(), static_dir=None))
+    app.dependency_overrides[planning_api.planning_data] = lambda: data
+    app.dependency_overrides[get_clock] = lambda: clock
+    client = TestClient(app)
+    assert client.post("/api/clock", json={"mode": "live"}).json()["mode"] == "live"
+    assert client.post("/api/clock", json={"speed": 60}).status_code == 409  # can't move live
+    body = client.post("/api/clock", json={"mode": "replay", "advance_minutes": 30}).json()
+    assert body["mode"] == "replay" and body["now"] == "2026-01-08T18:30:00Z"
+    assert client.post("/api/clock", json={"mode": "sometimes"}).status_code == 422
+
+
+def test_app_token_guards_costly_and_shared_actions(client, monkeypatch):
+    monkeypatch.setenv("APP_TOKEN", "letmein")
+    assert client.post("/api/clock", json={"advance_minutes": 5}).status_code == 401
+    wrong = {"X-App-Token": "nope"}
+    assert client.post("/api/clock", json={"advance_minutes": 5}, headers=wrong).status_code == 401
+    right = {"X-App-Token": "letmein"}
+    assert client.post("/api/clock", json={"advance_minutes": 5}, headers=right).status_code == 200
+    assert client.post("/api/agent/ask", json={"question": "hi"}).status_code == 401
+    assert client.post("/api/device/desk/propose", json={"run_id": "x"}).status_code == 401
+    # Reading stays open.
+    assert client.get("/api/clock").status_code == 200
+    assert client.get("/api/outlook").status_code == 200
 
 
 def test_live_clock_cannot_be_moved(client):

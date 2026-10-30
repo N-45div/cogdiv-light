@@ -174,6 +174,9 @@ class ClockOut(BaseModel):
 
 
 class ClockUpdate(BaseModel):
+    mode: str | None = Field(
+        None, pattern="^(live|replay)$", description="Switch between live and replay"
+    )
     at: datetime | None = Field(None, description="Jump to this time (no zone = UK local)")
     speed: float | None = Field(None, ge=0, description="Simulated seconds per real second")
     advance_minutes: float | None = Field(None, description="Move forward (or back) this much")

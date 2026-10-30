@@ -11,7 +11,7 @@ from .agent.llm import ChatClient, client_for
 from .agent.runner import run_agent
 from .agent.runs import RunLog, get_run_log
 from .device import DeviceRegistry, get_registry
-from .planning_api import ClockDep, PlanningDataDep
+from .planning_api import ClockDep, PlanningDataDep, require_app_token
 from .schemas import AgentRunOut, AgentRunSummary, AskRequest
 
 router = APIRouter(prefix="/api/agent")
@@ -28,7 +28,7 @@ RunLogDep = Annotated[RunLog, Depends(get_run_log)]
 RegistryDep = Annotated[DeviceRegistry, Depends(get_registry)]
 
 
-@router.post("/ask", response_model=AgentRunOut)
+@router.post("/ask", response_model=AgentRunOut, dependencies=[Depends(require_app_token)])
 def ask(
     request: AskRequest,
     data: PlanningDataDep,
