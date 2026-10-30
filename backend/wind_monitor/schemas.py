@@ -343,6 +343,9 @@ class AgentRunOut(BaseModel):
     models: list[str] = Field(description="Model behind each call, e.g. 'meta:muse-spark-1.3'")
     tool_calls: list[ToolCallOut]
     plan: dict | None = Field(None, description="The last plan_charge result, if any")
+    schedule: list[dict] = Field(
+        default_factory=list, description="That plan's charging windows, UTC (start, end, kWh)"
+    )
     rewrites: int
     seconds: float
     error: str | None

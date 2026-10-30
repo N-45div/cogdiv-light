@@ -64,6 +64,13 @@ def test_tool_call_then_a_checked_answer():
     assert run.factcheck["summary"] == "facts checked 4/4"
     assert run.models == ["fake:model", "fake:model"]
     assert run.plan["charge_windows"] == [{"from": "Fri 02:00", "to": "Fri 04:00", "kwh": 14.0}]
+    assert run.schedule == [
+        {
+            "start": "2026-01-09T02:00:00+00:00",
+            "end": "2026-01-09T04:00:00+00:00",
+            "energy_kwh": 14.0,
+        }
+    ]
     assert [c["name"] for c in run.tool_calls] == ["plan_charge"]
     # The model saw the current time, then the tool result tied to its call id.
     assert "Thu 08 Jan 18:00" in model.sent[0][1]["content"]
