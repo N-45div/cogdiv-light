@@ -128,3 +128,24 @@ def test_self_hosted_model_needs_its_url():
 def test_client_for_a_job_reads_the_environment():
     env = {"PLANNER_MODELS": "baseten:m", "BASETEN_API_KEY": "b"}
     assert [str(m) for m in client_for("planner", env).available()] == ["baseten:m"]
+
+
+def test_reasoning_effort_goes_only_to_providers_that_accept_it():
+    models = [ModelRef("meta", "m"), ModelRef("modal", "muse-glimmer")]
+    env = {**KEYS, "MODAL_GLIMMER_KEY": "k", "MODAL_GLIMMER_URL": "https://g.modal.run/v1"}
+
+    def fail_meta(request):
+        return httpx.Response(500) if request.url.host == "api.meta.ai" else _reply()
+
+    seen: list[httpx.Request] = []
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: seen.append(r) or fail_meta(r)))
+    ChatClient(models, env, http=http, reasoning_effort="low").chat([])
+    assert json.loads(seen[0].content)["reasoning_effort"] == "low"  # meta
+    assert "reasoning_effort" not in json.loads(seen[1].content)  # our Glimmer server
+
+
+def test_jobs_default_to_low_reasoning_effort():
+    assert client_for("planner", {}).reasoning_effort == "low"
+    watcher = client_for("watcher", {"WATCHER_REASONING_EFFORT": "medium"})
+    assert watcher.reasoning_effort == "medium"
+    assert client_for("planner", {"PLANNER_REASONING_EFFORT": ""}).reasoning_effort is None

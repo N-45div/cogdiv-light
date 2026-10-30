@@ -24,6 +24,8 @@ class Provider:
     key_env: str
     # Environment variable that overrides base_url (for servers we deploy ourselves).
     url_env: str | None = None
+    # Accepts the `reasoning_effort` request field (tested against the real API).
+    reasoning_effort: bool = False
 
     def url(self, env: Mapping[str, str]) -> str:
         return (env.get(self.url_env) if self.url_env else None) or self.base_url
@@ -32,13 +34,20 @@ class Provider:
 PROVIDERS = {
     p.name: p
     for p in (
-        Provider("meta", "https://api.meta.ai/v1", "MODEL_API_KEY"),
-        Provider("baseten", "https://inference.baseten.co/v1", "BASETEN_API_KEY"),
+        Provider("meta", "https://api.meta.ai/v1", "MODEL_API_KEY", reasoning_effort=True),
+        Provider(
+            "baseten", "https://inference.baseten.co/v1", "BASETEN_API_KEY", reasoning_effort=True
+        ),
         Provider("fireworks", "https://api.fireworks.ai/inference/v1", "FIREWORKS_API_KEY"),
         # Muse Glimmer served by vLLM on Modal: the URL comes from the deployment.
         Provider("modal", "", "MODAL_GLIMMER_KEY", url_env="MODAL_GLIMMER_URL"),
     )
 }
+
+# How long models think before answering. "low" made Muse Spark 1.3 3-5x faster (4-7 s instead
+# of 11-23 s per question) with every answer still passing the fact check, on 30 Oct 2026.
+# Override with PLANNER_REASONING_EFFORT / WATCHER_REASONING_EFFORT.
+DEFAULT_REASONING_EFFORT = "low"
 
 # Who does each job, best first. Override with PLANNER_MODELS / WATCHER_MODELS.
 DEFAULT_MODELS = {
@@ -91,8 +100,10 @@ class ChatClient:
         env: Mapping[str, str] = os.environ,
         http: httpx.Client | None = None,
         timeout: float = 90.0,
+        reasoning_effort: str | None = None,
     ) -> None:
         self.models = models
+        self.reasoning_effort = reasoning_effort
         self._env = env
         self._http = http or httpx.Client(timeout=timeout)
 
@@ -115,6 +126,8 @@ class ChatClient:
         for ref in available:
             provider = PROVIDERS[ref.provider]
             body = {"model": ref.model, "messages": messages, **params}
+            if self.reasoning_effort and provider.reasoning_effort:
+                body.setdefault("reasoning_effort", self.reasoning_effort)
             if tools:
                 body["tools"] = tools
             start = time.monotonic()
@@ -143,4 +156,5 @@ class ChatClient:
 
 
 def client_for(job: str, env: Mapping[str, str] = os.environ, **kwargs) -> ChatClient:
-    return ChatClient(models_for(job, env), env, **kwargs)
+    effort = env.get(f"{job.upper()}_REASONING_EFFORT", DEFAULT_REASONING_EFFORT) or None
+    return ChatClient(models_for(job, env), env, reasoning_effort=effort, **kwargs)
