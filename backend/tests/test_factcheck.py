@@ -106,3 +106,12 @@ def test_numbers_from_the_question_count():
 def test_small_bare_numbers_are_not_checked_but_large_ones_are():
     assert _check("Three windows, step 2 of 3.").summary == "no figures to check"
     assert not _check("Plan reference 4521.").passed
+
+
+def test_figures_in_result_keys_count():
+    outlook = {
+        "name": "get_wind_outlook",
+        "result": {"track_record": {"metered_wind_as_pct_of_forecast": {"6-12h ahead": 89}}},
+    }
+    result = check("Forecasts made 6-12h ahead came in at 89%.", [outlook])
+    assert result.passed, result.unsupported
