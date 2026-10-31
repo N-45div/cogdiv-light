@@ -97,7 +97,23 @@ can't be reached for 10 minutes, the relay switches off.
 **Wiring the load (low voltage only):** relay module IN → GPIO 14, VCC → 5V, GND → GND; the
 relay switches a USB lamp or fan. Don't switch mains.
 
-## 5. Building it yourself
+## 5. Checking it remotely
+
+Once the board is on Wi-Fi it polls the server, so it can be checked from anywhere, no laptop
+connection needed (`URL` = server, `APP` = app token):
+
+```bash
+curl URL/api/devices                       # last seen, Wi-Fi signal, firmware, free memory,
+                                           # last HTTP status, screen mode, button presses,
+                                           # relay pin as read back from the board
+curl -X POST URL/api/device/desk-1/test -H "X-App-Token: APP" \
+     -H "Content-Type: application/json" -d '{"relay": true, "seconds": 5}'
+                                           # relay on for 5 s: hear it click, see "Relay test"
+```
+
+The board reports telemetry every 30 seconds and right after each button press.
+
+## 6. Building it yourself
 
 ```bash
 pip install platformio
