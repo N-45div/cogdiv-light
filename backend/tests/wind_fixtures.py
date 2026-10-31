@@ -32,3 +32,24 @@ def synthetic_wind(near: float = 1.02, far: float = 1.2, days: int = 12) -> Wind
             if col.endswith("_time"):
                 df[col] = df[col].dt.as_unit("ns")
     return WindData(actuals, forecasts, "snapshot", datetime(2026, 10, 1, tzinfo=UTC))
+
+
+def night_wind(early, late, actual, days: int = 8) -> WindData:
+    """Runs every 2 hours for 48 hours. A run published before 20:00 the evening before a target
+    uses early(target); from 20:00 on, late(target). Actual wind is actual(target)."""
+    halves = pd.date_range(FIRST, periods=48 * days, freq="30min")
+    actuals = pd.DataFrame({"start_time": halves, "generation_mw": [actual(t) for t in halves]})
+    rows = []
+    runs = pd.date_range(FIRST - pd.Timedelta(days=2), periods=12 * (days + 2), freq="2h")
+    for published in runs:
+        for h in range(1, 49):
+            target = published + pd.Timedelta(hours=h)
+            evening = (target - pd.Timedelta(hours=12)).normalize() + pd.Timedelta(hours=20)
+            value = early(target) if published < evening else late(target)
+            rows.append((published, target, value))
+    forecasts = pd.DataFrame(rows, columns=["publish_time", "start_time", "generation_mw"])
+    for df in (actuals, forecasts):
+        for col in df.columns:
+            if col.endswith("_time"):
+                df[col] = df[col].dt.as_unit("ns")
+    return WindData(actuals, forecasts, "snapshot", datetime(2026, 10, 1, tzinfo=UTC))
