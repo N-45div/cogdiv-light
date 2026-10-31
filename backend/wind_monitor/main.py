@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -14,6 +16,8 @@ from .config import Settings
 from .device_api import router as device_router
 from .planning_api import router as planning_router
 from .store import DataUnavailableError
+from .watch_api import router as watch_router
+from .watch_api import watch_loop
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +31,17 @@ CACHE_CONTROL = "public, max-age=300, s-maxage=86400, stale-while-revalidate=864
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # The watcher re-checks approved plans in the background (WATCH=0 turns it off).
+        task = asyncio.create_task(watch_loop()) if settings.watch else None
+        yield
+        if task:
+            task.cancel()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="GB Wind Forecast Monitor",
         version="0.1.0",
         description=(
@@ -43,6 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(planning_router)
     app.include_router(agent_router)
     app.include_router(device_router)
+    app.include_router(watch_router)
 
     @app.exception_handler(DataUnavailableError)
     async def data_unavailable(request: Request, exc: DataUnavailableError) -> JSONResponse:

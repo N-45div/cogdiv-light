@@ -82,6 +82,8 @@ class Settings:
     replay_start: datetime = DEFAULT_REPLAY_START
     # Simulated seconds per real second; 0 = paused (move it with POST /api/clock).
     replay_speed: float = 0.0
+    # Run the watcher in the background (re-checks approved plans every 30 clock-minutes).
+    watch: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -96,6 +98,7 @@ class Settings:
             clock_mode=_choice("CLOCK_MODE", "replay", CLOCK_MODES),
             replay_start=_moment(os.environ.get("REPLAY_START"), DEFAULT_REPLAY_START),
             replay_speed=float(os.environ.get("REPLAY_SPEED", "0")),
+            watch=os.environ.get("WATCH", "1").lower() not in ("0", "false", "no"),
         )
 
 

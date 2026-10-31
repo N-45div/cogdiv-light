@@ -416,3 +416,19 @@ class DeviceSummary(BaseModel):
     active_id: str | None
     telemetry: dict
     events: list[dict]
+
+
+# ---- watcher ----------------------------------------------------------------------------
+
+
+class WatchFindingOut(BaseModel):
+    id: str
+    device_id: str
+    checked_at: str
+    outcome: str = Field(description="better_window, below_plan, on_track, no_forecast or done")
+    facts: dict = Field(description="The numbers behind the outcome, from the planner")
+    message: str = Field(description="Plain sentence written by code")
+    note: str | None = Field(None, description="The watcher model's sentence, fact-checked")
+    note_check: str | None = None
+    model: str | None = None
+    proposal_id: str | None = Field(None, description="Set when a better window was proposed")
