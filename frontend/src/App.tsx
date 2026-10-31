@@ -6,9 +6,11 @@ import { formatUkDateTime } from './lib/format'
 import { useLoad, useUrlState, type View } from './lib/hooks'
 import { resolveSelection } from './lib/selection'
 import { AccuracyView } from './views/AccuracyView'
+import { AgentView } from './views/AgentView'
 import { DayView } from './views/DayView'
 
 const TABS: { view: View; label: string }[] = [
+  { view: 'agent', label: 'Agent & device' },
   { view: 'day', label: 'Day-ahead view' },
   { view: 'accuracy', label: 'Forecast accuracy' },
 ]
@@ -54,25 +56,31 @@ export default function App() {
       }
       footer={<DataFooter meta={m} />}
     >
-      <div className="controls">
-        {url.view === 'day' && (
-          <DayPicker
-            value={date}
-            min={m.delivery_first}
-            max={m.delivery_last}
-            onChange={(value) => setUrl({ date: value })}
-          />
-        )}
-        <CutoffPicker
-          presets={m.cutoff_presets}
-          value={cutoff}
-          onChange={(value) => setUrl({ cutoff: value })}
-        />
-      </div>
-      {url.view === 'day' ? (
-        <DayView date={date} cutoff={cutoff} />
+      {url.view === 'agent' ? (
+        <AgentView />
       ) : (
-        <AccuracyView cutoff={cutoff} onSelectDay={(day) => setUrl({ view: 'day', date: day })} />
+        <>
+          <div className="controls">
+            {url.view === 'day' && (
+              <DayPicker
+                value={date}
+                min={m.delivery_first}
+                max={m.delivery_last}
+                onChange={(value) => setUrl({ date: value })}
+              />
+            )}
+            <CutoffPicker
+              presets={m.cutoff_presets}
+              value={cutoff}
+              onChange={(value) => setUrl({ cutoff: value })}
+            />
+          </div>
+          {url.view === 'day' ? (
+            <DayView date={date} cutoff={cutoff} />
+          ) : (
+            <AccuracyView cutoff={cutoff} onSelectDay={(day) => setUrl({ view: 'day', date: day })} />
+          )}
+        </>
       )}
     </Shell>
   )
@@ -86,7 +94,7 @@ function Shell(props: { children: ReactNode; tabs?: ReactNode; footer?: ReactNod
           <img src="/favicon.svg" alt="" />
           <div>
             <h1>Wind Forecast Monitor</h1>
-            <p>GB national wind generation · day-ahead purchase decisions · January 2026</p>
+            <p>GB wind generation · an agent that plans flexible demand around it · Meta Muse models</p>
           </div>
         </div>
         {props.tabs}
