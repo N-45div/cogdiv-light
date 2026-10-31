@@ -46,9 +46,9 @@ To change any of this later: hold **BOOT** for 10 seconds.
 
 ## 3. The server
 
-**Deployed (normal):** use the URL from the latest *Deploy* run on GitHub (Actions → Deploy →
-summary), e.g. `https://<workspace>--wind-buddy-web.modal.run`, and the device token for
-`desk-1` from the owner's `DEVICE_TOKENS` secret. Commands for the deployed app, including the
+**Deployed (normal):** use the URL that `modal deploy deploy/modal_app.py` printed, e.g.
+`https://<workspace>--wind-buddy-web.modal.run`, and the device token for `desk-1` from the
+`DEVICE_TOKENS` you set in the `wind-buddy` Modal secret. Commands for the deployed app, including the
 replay demo, are in [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
 
 **Without the deployment**, run the API on the laptop and use the laptop's address:

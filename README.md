@@ -208,9 +208,9 @@ Interactive documentation: `/api/docs`.
 
 ## Deploying
 
-**The full app (agent, devices, website): Modal, from GitHub.** Every push to `main` that
-passes CI is deployed by `.github/workflows/deploy.yml` to one always-on Modal container
-(`deploy/modal_app.py`). Set-up (repository secrets) and day-to-day commands:
+**The full app (agent, devices, website): Modal.** One always-on container
+(`deploy/modal_app.py`), deployed with `modal deploy deploy/modal_app.py` from a laptop (or,
+optionally, by `.github/workflows/deploy.yml` after CI). Set-up and day-to-day commands:
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 **The read-only January views only: Vercel.** Import the repository at https://vercel.com/new
