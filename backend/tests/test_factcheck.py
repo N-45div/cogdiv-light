@@ -115,3 +115,10 @@ def test_figures_in_result_keys_count():
     }
     result = check("Forecasts made 6-12h ahead came in at 89%.", [outlook])
     assert result.passed, result.unsupported
+
+
+def test_negative_changes_match_whether_written_with_a_sign_or_in_words():
+    change = {"name": "watch_check", "result": {"change_since_planned_pct": -33.3}}
+    assert check("Wind is down (-33.3%).", [change]).passed
+    assert check("Wind looks 33% lower than planned.", [change]).passed
+    assert not check("Wind looks 45% lower than planned.", [change]).passed

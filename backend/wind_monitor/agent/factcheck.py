@@ -10,7 +10,9 @@ or the user's own question:
 - bare small numbers (up to 12: "3 windows", "two sentences") are not checked; bare larger
   numbers are.
 
-Dates ("30 Oct", "2026-01-09") and years are not figures and are skipped.
+Dates ("30 Oct", "2026-01-09") and years are not figures and are skipped. Magnitudes are
+checked, not signs: "33% lower" and "(-33.3%)" both match a change of -33.3, since the direction
+is said in words.
 """
 
 from __future__ import annotations
@@ -162,8 +164,9 @@ class Evidence:
             self.numbers.append((source, value))
 
     def match_number(self, value: float, decimals: int, unit: str) -> str | None:
+        # Magnitudes are compared: the sign is usually said in words ("33% lower" for -33.3).
         for source, known in self.numbers:
-            if _rounds_to(known * (0.001 if unit == "gw" else 1), value, decimals):
+            if _rounds_to(abs(known) * (0.001 if unit == "gw" else 1), value, decimals):
                 return source
         return None
 
