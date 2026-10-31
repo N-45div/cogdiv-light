@@ -11,12 +11,20 @@ import hmac
 import os
 from typing import Annotated
 
+import pandas as pd
 from fastapi import APIRouter, Depends, Header, HTTPException, Path
 
 from . import outlook as ol
 from .agent.runs import RunLog, get_run_log
 from .config import UK_TZ
-from .device import DeviceError, DeviceRegistry, DeviceState, get_registry, relay_on, screen
+from .device import (
+    DeviceError,
+    DeviceRegistry,
+    DeviceState,
+    effective_relay,
+    get_registry,
+    screen,
+)
 from .planning_api import ClockDep, PlanningDataDep, require_app_token
 from .schemas import (
     DEVICE_ID_PATTERN,
@@ -24,6 +32,7 @@ from .schemas import (
     DeviceSummary,
     DeviceView,
     ProposeRequest,
+    RelayTest,
 )
 from .store import WindData
 
@@ -53,15 +62,16 @@ AuthorisedDevice = Annotated[str, Depends(authorised_device)]
 
 
 def view(state: DeviceState, now, data: WindData) -> dict:
+    real_now = pd.Timestamp.now(tz="UTC")
     return {
         "device_id": state.device_id,
         "now": now.isoformat(),
         "now_uk": now.tz_convert(UK_TZ).strftime("%H:%M"),
         "version": state.version,
-        "relay": relay_on(state.active, now),
+        "relay": effective_relay(state, now, real_now),
         "proposal_id": state.proposal.id if state.proposal else None,
         "poll_seconds": POLL_SECONDS,
-        **screen(state, now, ol.latest_actual(data, now)),
+        **screen(state, now, ol.latest_actual(data, now), real_now),
     }
 
 
@@ -114,6 +124,26 @@ def propose(
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return view(state, now, data)
+
+
+@router.post(
+    "/device/{device_id}/test",
+    response_model=DeviceView,
+    dependencies=[Depends(require_app_token)],
+)
+def relay_test(
+    device_id: DeviceId,
+    request: RelayTest,
+    clock: ClockDep,
+    data: PlanningDataDep,
+    registry: RegistryDep,
+) -> dict:
+    """Hardware check: switch the device's relay on (or off) for a few real seconds,
+    whatever its plan says. The device picks it up on its next poll."""
+    state = registry.relay_test(
+        device_id, request.relay, request.seconds, pd.Timestamp.now(tz="UTC")
+    )
+    return view(state, clock.now(), data)
 
 
 @router.get("/devices", response_model=list[DeviceSummary])

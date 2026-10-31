@@ -68,6 +68,12 @@ class DeviceState:
     telemetry: dict = field(default_factory=dict)
     events: deque = field(default_factory=lambda: deque(maxlen=50))
     alert: str | None = None  # one short line from the watcher, e.g. "Wind 18% below plan"
+    # A remote relay test (real time, not the planning clock) overrides the plan while it runs.
+    test_relay: bool = False
+    test_until: pd.Timestamp | None = None
+
+    def testing(self, real_now: pd.Timestamp) -> bool:
+        return self.test_until is not None and real_now < self.test_until
 
     def changed(self, what: str, now: pd.Timestamp) -> None:
         self.version += 1
@@ -90,13 +96,30 @@ def _fit(line: str) -> str:
     return line if len(line) <= SCREEN_WIDTH else line[: SCREEN_WIDTH - 1] + "~"
 
 
+def effective_relay(state: DeviceState, now: pd.Timestamp, real_now: pd.Timestamp) -> bool:
+    """A running relay test wins; otherwise the approved plan decides, by the planning clock."""
+    if state.testing(real_now):
+        return state.test_relay
+    return relay_on(state.active, now)
+
+
 def relay_on(active: Proposal | None, now: pd.Timestamp) -> bool:
     return bool(active) and any(start <= now < end for start, end in active.windows())
 
 
-def screen(state: DeviceState, now: pd.Timestamp, latest: dict | None) -> dict:
+def screen(
+    state: DeviceState,
+    now: pd.Timestamp,
+    latest: dict | None,
+    real_now: pd.Timestamp | None = None,
+) -> dict:
     """What the device shows: a mode, a title, up to six lines and a button prompt."""
     wind_now = f"Now {_gw(latest['actual_mw'])}" if latest else "Now: no data"
+    if real_now is not None and state.testing(real_now):
+        left = max(1, int((state.test_until - real_now).total_seconds()))
+        relay = "ON" if state.test_relay else "OFF"
+        lines = [f"Relay {relay} for {left} s", "(from the server)"]
+        return _view("test", "Relay test", lines, None)
     if state.proposal:
         p = state.proposal
         windows = p.windows()
@@ -218,6 +241,16 @@ class DeviceRegistry:
             if state.alert != alert:
                 state.alert = alert
                 state.changed(f"alert: {alert}" if alert else "alert cleared", now)
+
+    def relay_test(
+        self, device_id: str, relay: bool, seconds: int, real_now: pd.Timestamp
+    ) -> DeviceState:
+        with self._lock:
+            state = self._get(device_id)
+            state.test_relay = relay
+            state.test_until = real_now + pd.Timedelta(seconds=seconds)
+            state.changed(f"relay test: {'on' if relay else 'off'} for {seconds} s", real_now)
+            return state
 
     def seen(self, device_id: str, now: pd.Timestamp) -> DeviceState:
         with self._lock:

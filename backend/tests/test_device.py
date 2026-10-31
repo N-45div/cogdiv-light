@@ -154,3 +154,20 @@ def test_lines_fit_the_screen_and_many_windows_are_summarised(registry):
 
 def test_proposal_windows_are_timestamps():
     assert Proposal.from_run(_run()).windows() == [(_at("09T02:00"), _at("09T04:00"))]
+
+
+def test_a_relay_test_overrides_the_plan_for_real_seconds(registry):
+    from wind_monitor.device import effective_relay
+
+    registry.propose("desk", _run(), NOW)
+    registry.event("desk", {"type": "approve", "proposal_id": "run1"}, NOW)
+    real = pd.Timestamp("2026-10-31T21:00:00Z")
+    state = registry.relay_test("desk", True, 5, real)
+    # During the test the relay is on, even though the plan says off at 18:00...
+    assert effective_relay(state, NOW, real + pd.Timedelta(seconds=4)) is True
+    view = screen(state, NOW, LATEST, real + pd.Timedelta(seconds=2))
+    assert view["mode"] == "test" and view["lines"][0] == "Relay ON for 3 s"
+    # ...and afterwards the plan decides again.
+    assert effective_relay(state, NOW, real + pd.Timedelta(seconds=5)) is False
+    assert screen(state, NOW, LATEST, real + pd.Timedelta(seconds=6))["mode"] == "waiting"
+    assert state.events[0]["event"] == "relay test: on for 5 s"

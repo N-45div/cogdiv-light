@@ -113,3 +113,36 @@ def test_telemetry_is_kept(client):
     event = {"type": "telemetry", "relay": False, "rssi": -58, "uptime_s": 120, "firmware": "0.1"}
     assert client.post("/api/device/desk-1/event", json=event).status_code == 200
     assert client.get("/api/devices").json()[0]["telemetry"]["rssi"] == -58
+
+
+def test_remote_relay_test_needs_the_app_token(client, monkeypatch):
+    monkeypatch.setenv("APP_TOKEN", "letmein")
+    assert client.post("/api/device/desk-1/test", json={"seconds": 5}).status_code == 401
+    body = client.post(
+        "/api/device/desk-1/test", json={"seconds": 5}, headers={"X-App-Token": "letmein"}
+    ).json()
+    assert body["relay"] is True and body["mode"] == "test"
+    assert (
+        client.post(
+            "/api/device/desk-1/test", json={"seconds": 500}, headers={"X-App-Token": "letmein"}
+        ).status_code
+        == 422
+    )
+
+
+def test_rich_telemetry_is_kept(client):
+    event = {
+        "type": "telemetry",
+        "relay": True,
+        "relay_pin": True,
+        "free_heap": 182_000,
+        "last_http": 200,
+        "mode": "charging",
+        "version": 4,
+        "presses": 2,
+        "ip": "192.168.1.40",
+    }
+    client.post("/api/device/desk-1/event", json=event)
+    telemetry = client.get("/api/devices").json()[0]["telemetry"]
+    assert telemetry["relay_pin"] is True and telemetry["presses"] == 2
+    assert telemetry["last_http"] == 200 and telemetry["mode"] == "charging"

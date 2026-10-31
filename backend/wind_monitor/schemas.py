@@ -388,6 +388,19 @@ class DeviceEvent(BaseModel):
     rssi: int | None = Field(None, description="Telemetry: Wi-Fi signal, dBm")
     uptime_s: int | None = None
     firmware: str | None = None
+    # More telemetry, so the device can be checked remotely:
+    free_heap: int | None = Field(None, description="Free memory, bytes")
+    last_http: int | None = Field(None, description="Last HTTP status from the server")
+    mode: str | None = Field(None, description="What the screen is showing")
+    version: int | None = Field(None, description="State version the device last drew")
+    presses: int | None = Field(None, description="Button presses since boot")
+    relay_pin: bool | None = Field(None, description="Relay pin as read back from the board")
+    ip: str | None = None
+
+
+class RelayTest(BaseModel):
+    relay: bool = Field(True, description="Switch the relay on (or off) for the test")
+    seconds: int = Field(5, ge=1, le=120, description="How long, in real seconds")
 
 
 class ProposeRequest(BaseModel):
