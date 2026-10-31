@@ -122,11 +122,138 @@ export interface AccuracyView {
   histogram: { lower_mw: number; upper_mw: number; count: number }[]
 }
 
+// ---- planning, agent, devices, watcher (backend/wind_monitor/schemas.py, second half) ----
+
+export interface ClockState {
+  mode: 'live' | 'replay'
+  now: string
+  speed: number // simulated seconds per real second (0 = paused)
+  first: string | null
+  last: string | null
+}
+
+export interface ClockUpdate {
+  mode?: 'live' | 'replay'
+  at?: string // "YYYY-MM-DDTHH:MM", UK time
+  speed?: number
+  advance_minutes?: number
+}
+
+export interface LeadStats {
+  lead_bucket: string // e.g. "0-6h"
+  n: number
+  bias_mw: number | null
+  mae_mw: number | null
+  over_forecast_share_pct: number | null
+  actual_share_pct: number | null // metered wind as % of the forecast (median)
+}
+
+export interface OutlookPoint {
+  time: string
+  forecast_mw: number | null
+  expected_mw: number | null // forecast scaled by its track record
+  low_mw: number | null
+  high_mw: number | null
+  lead_hours: number
+  publish_time: string
+}
+
+export interface OutlookView {
+  as_of: string
+  mode: string
+  data_source: string
+  latest_run: string | null
+  latest_actual: { time: string; actual_mw: number | null } | null
+  history: { days: number; n: number; by_lead: LeadStats[] }
+  band_note: string
+  points: OutlookPoint[]
+  recent: {
+    hours: number
+    mean_error_mw: number | null
+    points: { time: string; actual_mw: number | null; forecast_mw: number | null }[]
+  }
+}
+
+export interface FactClaim {
+  text: string
+  kind: 'time' | 'number'
+  supported: boolean
+  source: string | null
+}
+
+export interface ToolCall {
+  name: string
+  arguments: Record<string, unknown> | string | null
+  result: Record<string, unknown>
+}
+
+export interface AgentRun {
+  id: string
+  question: string
+  as_of: string
+  mode: string
+  answer: string | null
+  verified: boolean
+  factcheck: { passed: boolean; summary: string; claims: FactClaim[] } | null
+  models: string[]
+  tool_calls: ToolCall[]
+  plan: Record<string, unknown> | null
+  schedule: { start: string; end: string; energy_kwh: number }[]
+  rewrites: number
+  seconds: number
+  error: string | null
+  proposed_to?: string | null
+}
+
+export interface AgentRunSummary {
+  id: string
+  question: string
+  as_of: string
+  answer: string | null
+  verified: boolean
+  summary: string | null
+  models: string[]
+  seconds: number
+}
+
+export interface DeviceSummary {
+  device_id: string
+  last_seen: string | null
+  version: number
+  proposal_id: string | null
+  active_id: string | null
+  telemetry: Record<string, unknown>
+  events: { at: string; event: string }[]
+}
+
+export interface WatchFinding {
+  id: string
+  device_id: string
+  checked_at: string
+  outcome: 'better_window' | 'below_plan' | 'on_track' | 'no_forecast' | 'done'
+  facts: Record<string, unknown>
+  message: string
+  note: string | null
+  note_check: string | null
+  model: string | null
+  proposal_id: string | null
+}
+
 export class ApiError extends Error {}
 
 async function getJson<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const query = new URLSearchParams(params).toString()
-  const response = await fetch(query ? `${path}?${query}` : path)
+  return readJson<T>(await fetch(query ? `${path}?${query}` : path))
+}
+
+/** POST with the app token (needed to ask the agent, move the clock, run the watcher). */
+async function postJson<T>(path: string, body: unknown, appToken: string): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (appToken) headers['X-App-Token'] = appToken
+  return readJson<T>(await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) }))
+}
+
+async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail = response.statusText
     try {
@@ -145,4 +272,19 @@ export const api = {
   day: (deliveryDate: string, cutoff: string) =>
     getJson<DayView>('/api/day', { delivery_date: deliveryDate, cutoff }),
   accuracy: (cutoff: string) => getJson<AccuracyView>('/api/accuracy', { cutoff }),
+  clock: () => getJson<ClockState>('/api/clock'),
+  outlook: (hours = 24) => getJson<OutlookView>('/api/outlook', { hours: String(hours) }),
+  runs: () => getJson<AgentRunSummary[]>('/api/agent/runs'),
+  run: (id: string) => getJson<AgentRun>(`/api/agent/runs/${encodeURIComponent(id)}`),
+  devices: () => getJson<DeviceSummary[]>('/api/devices'),
+  watch: () => getJson<WatchFinding[]>('/api/watch'),
+  ask: (question: string, deviceId: string, appToken: string) =>
+    postJson<AgentRun>(
+      '/api/agent/ask',
+      deviceId ? { question, device_id: deviceId } : { question },
+      appToken,
+    ),
+  setClock: (update: ClockUpdate, appToken: string) =>
+    postJson<ClockState>('/api/clock', update, appToken),
+  runWatch: (appToken: string) => postJson<WatchFinding[]>('/api/watch/run', {}, appToken),
 }

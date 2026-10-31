@@ -42,7 +42,19 @@ export function useLoad<T>(load: () => Promise<T>, key: string): Loadable<T> {
   return { data: result.data, error: current ? result.error : undefined, loading: !current }
 }
 
-export type View = 'day' | 'accuracy'
+/**
+ * useLoad, refreshed every `everyMs`. Old data stays on screen between refreshes.
+ */
+export function usePolling<T>(load: () => Promise<T>, key: string, everyMs: number): Loadable<T> {
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((t) => t + 1), everyMs)
+    return () => window.clearInterval(id)
+  }, [everyMs])
+  return useLoad(load, `${key}#${tick}`)
+}
+
+export type View = 'day' | 'accuracy' | 'agent'
 
 export interface UrlState {
   view: View
@@ -53,7 +65,8 @@ export interface UrlState {
 function readUrl(): UrlState {
   const params = new URLSearchParams(window.location.search)
   return {
-    view: params.get('view') === 'accuracy' ? 'accuracy' : 'day',
+    // The agent tab is the front page; the January study views are one click away.
+    view: (['day', 'accuracy'] as const).find((v) => v === params.get('view')) ?? 'agent',
     date: params.get('date'),
     cutoff: params.get('cutoff'),
   }

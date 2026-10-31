@@ -72,7 +72,15 @@ describe('useUrlState', () => {
   it('reads the selection from the URL and defaults the view', () => {
     window.history.replaceState(null, '', '/?date=2026-01-15&cutoff=09:50')
     const { result } = renderHook(() => useUrlState())
-    expect(result.current[0]).toEqual({ view: 'day', date: '2026-01-15', cutoff: '09:50' })
+    expect(result.current[0]).toEqual({ view: 'agent', date: '2026-01-15', cutoff: '09:50' })
+  })
+
+  it('reads each tab from the URL', () => {
+    for (const view of ['day', 'accuracy', 'agent'] as const) {
+      window.history.replaceState(null, '', `/?view=${view}`)
+      const { result } = renderHook(() => useUrlState())
+      expect(result.current[0].view).toBe(view)
+    }
   })
 
   it('writes changes to the URL so the screen can be shared', () => {
