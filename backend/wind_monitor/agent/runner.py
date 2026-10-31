@@ -59,6 +59,9 @@ class AgentRun:
     plan: dict | None = None  # the last plan_charge result, if any
     # That plan's charging windows as exact times (UTC ISO), for a device to act on.
     schedule: list[dict] = field(default_factory=list)
+    # The job behind that plan (energy, power, earliest, deadline as UTC ISO), so the watcher
+    # can re-plan what is left of it.
+    job: dict | None = None
     rewrites: int = 0
     seconds: float = 0.0
     error: str | None = None
@@ -136,5 +139,13 @@ def run_agent(
             }
             for b in blocks(toolbox.last_plan.slots)
         ]
+        job = toolbox.last_plan.job
+        run.job = {
+            "energy_kwh": job.energy_kwh,
+            "power_kw": job.power_kw,
+            "earliest": job.earliest.isoformat(),
+            "deadline": job.deadline.isoformat(),
+            "interruptible": job.interruptible,
+        }
     run.seconds = round(time.monotonic() - start, 2)
     return run

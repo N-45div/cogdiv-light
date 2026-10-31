@@ -114,6 +114,7 @@ def test_reject_and_stop(registry):
     registry.propose("desk", _run(), NOW)
     state = registry.event("desk", {"type": "reject", "proposal_id": "run1"}, NOW)
     assert state.proposal is None and state.active is None
+    assert state.events[0]["event"] == "rejected run1"
     registry.propose("desk", _run("run2"), NOW)
     registry.event("desk", {"type": "approve", "proposal_id": "run2"}, NOW)
     state = registry.event("desk", {"type": "stop"}, NOW)

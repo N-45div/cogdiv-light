@@ -354,6 +354,7 @@ class AgentRunOut(BaseModel):
     schedule: list[dict] = Field(
         default_factory=list, description="That plan's charging windows, UTC (start, end, kWh)"
     )
+    job: dict | None = Field(None, description="The job behind that plan (energy, power, deadline)")
     rewrites: int
     seconds: float
     error: str | None

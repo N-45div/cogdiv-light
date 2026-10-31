@@ -18,6 +18,8 @@ import pandas as pd
 from .agent.runner import AgentRun
 from .config import UK_TZ
 
+PAST = {"approve": "approved", "reject": "rejected"}
+
 # Characters per line on the 128x160 ST7735 at text size 1 (6x8 px font).
 SCREEN_WIDTH = 21
 MAX_WINDOW_LINES = 3
@@ -31,9 +33,11 @@ class Proposal:
     schedule: list[dict]  # [{"start", "end" (UTC ISO), "energy_kwh"}]
     plan: dict  # the plan_charge result
     facts: str  # fact-check summary, e.g. "facts checked 4/4"
+    job: dict | None = None  # energy, power, deadline: what the watcher re-plans
+    title: str = "Charge plan?"
 
     @classmethod
-    def from_run(cls, run: AgentRun) -> Proposal:
+    def from_run(cls, run: AgentRun, title: str = "Charge plan?") -> Proposal:
         """Only a verified run with a feasible plan may become a proposal."""
         if not run.verified:
             raise ValueError("Only fact-checked answers can be sent to a device")
@@ -46,6 +50,8 @@ class Proposal:
             run.schedule,
             run.plan,
             run.factcheck["summary"] if run.factcheck else "",
+            run.job,
+            title,
         )
 
     def windows(self) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
@@ -61,6 +67,7 @@ class DeviceState:
     last_seen: str | None = None
     telemetry: dict = field(default_factory=dict)
     events: deque = field(default_factory=lambda: deque(maxlen=50))
+    alert: str | None = None  # one short line from the watcher, e.g. "Wind 18% below plan"
 
     def changed(self, what: str, now: pd.Timestamp) -> None:
         self.version += 1
@@ -100,21 +107,25 @@ def screen(state: DeviceState, now: pd.Timestamp, latest: dict | None) -> dict:
         if len(windows) > MAX_WINDOW_LINES:
             lines.append(f"+{len(windows) - MAX_WINDOW_LINES} more windows")
         lines.append(f"Wind ~{_gw(p.plan.get('expected_wind_while_charging_mw'))}")
+        better = p.plan.get("more_wind_than_current_plan_pct")
         gain = p.plan.get("more_wind_than_charging_straight_away_pct")
-        if gain is not None:
+        if better is not None:
+            lines.append(f"{better:+g}% vs old plan")
+        elif gain is not None:
             lines.append(f"{gain:+g}% vs plug-in")
         lines.append(p.facts)
-        return _view("proposal", "Charge plan?", lines, "hold:yes  tap:no")
+        return _view("proposal", p.title, lines, "hold:yes  tap:no")
 
     if state.active:
         windows = state.active.windows()
         expected = f"Plan ~{_gw(state.active.plan.get('expected_wind_while_charging_mw'))}"
         current = next(((s, e) for s, e in windows if s <= now < e), None)
+        alert = [state.alert] if state.alert else []
         if current:
             return _view(
                 "charging",
                 "CHARGING",
-                [f"until {_hhmm(current[1])}", expected, wind_now],
+                [f"until {_hhmm(current[1])}", expected, wind_now, *alert],
                 "hold:stop",
             )
         upcoming = [(s, e) for s, e in windows if s > now]
@@ -123,7 +134,7 @@ def screen(state: DeviceState, now: pd.Timestamp, latest: dict | None) -> dict:
             return _view(
                 "waiting",
                 "Waiting for wind",
-                [f"Next {_hhmm(s)}-{_hhmm(e)}", expected, wind_now],
+                [f"Next {_hhmm(s)}-{_hhmm(e)}", expected, wind_now, *alert],
                 "hold:stop",
             )
         kwh = sum(w["energy_kwh"] for w in state.active.schedule)
@@ -158,13 +169,13 @@ class DeviceRegistry:
         with self._lock:
             return list(self._devices.values())
 
-    def propose(self, device_id: str, run: AgentRun, now: pd.Timestamp) -> DeviceState:
-        proposal = Proposal.from_run(run)
+    def propose(
+        self, device_id: str, run: AgentRun, now: pd.Timestamp, title: str = "Charge plan?"
+    ) -> DeviceState:
+        proposal = Proposal.from_run(run, title)
+        self.propose_proposal(device_id, proposal, now)
         with self._lock:
-            state = self._get(device_id)
-            state.proposal = proposal
-            state.changed(f"proposed {proposal.id}", now)
-            return state
+            return self._get(device_id)
 
     def event(self, device_id: str, event: dict, now: pd.Timestamp) -> DeviceState:
         kind = event.get("type")
@@ -178,16 +189,35 @@ class DeviceRegistry:
                 state.proposal = None
                 if kind == "approve":
                     state.active = pending
-                state.changed(f"{kind}d {pending.id}", now)
+                    state.alert = None
+                state.changed(f"{PAST[kind]} {pending.id}", now)
             elif kind == "stop":
                 if state.active is not None:
                     state.changed(f"stopped {state.active.id}", now)
                     state.active = None
+                    state.alert = None
             elif kind == "telemetry":
                 state.telemetry = {k: v for k, v in event.items() if k != "type"}
             else:
                 raise DeviceError(f"Unknown event type {kind!r}")
             return state
+
+    def with_active_plans(self) -> list[DeviceState]:
+        with self._lock:
+            return [s for s in self._devices.values() if s.active is not None]
+
+    def propose_proposal(self, device_id: str, proposal: Proposal, now: pd.Timestamp) -> None:
+        with self._lock:
+            state = self._get(device_id)
+            state.proposal = proposal
+            state.changed(f"proposed {proposal.id}", now)
+
+    def set_alert(self, device_id: str, alert: str | None, now: pd.Timestamp) -> None:
+        with self._lock:
+            state = self._get(device_id)
+            if state.alert != alert:
+                state.alert = alert
+                state.changed(f"alert: {alert}" if alert else "alert cleared", now)
 
     def seen(self, device_id: str, now: pd.Timestamp) -> DeviceState:
         with self._lock:
