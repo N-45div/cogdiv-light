@@ -35,7 +35,7 @@ static const char *SETUP_PASSWORD = "windsetup";
 static const uint32_t TAP_MAX_MS = 700;           // shorter press = tap
 static const uint32_t HOLD_MS = 1000;             // longer press = hold (fires while held)
 static const uint32_t RESET_HOLD_MS = 10000;      // hold this long: forget Wi-Fi, open setup
-static const uint32_t TELEMETRY_EVERY_MS = 60000;
+static const uint32_t TELEMETRY_EVERY_MS = 30000;
 static const uint32_t OFFLINE_RELAY_OFF_MS = 10UL * 60UL * 1000UL;
 
 struct Settings {
@@ -65,6 +65,8 @@ struct View {
 
 uint32_t lastOkMs = 0, nextPollMs = 0, nextTelemetryMs = 0;
 int failedPolls = 0;
+int lastHttp = 0;        // last HTTP status from the server (reported in telemetry)
+uint32_t presses = 0;    // button presses since boot (reported in telemetry)
 bool relayState = false;
 
 // ---- relay and LED ---------------------------------------------------------------------------
@@ -89,6 +91,7 @@ uint16_t modeColor(const String &mode) {
   if (mode == "waiting") return COLOR_TEAL;
   if (mode == "done") return COLOR_GREY;
   if (mode == "offline" || mode == "error") return ST77XX_RED;
+  if (mode == "test") return ST77XX_MAGENTA;
   return ST77XX_BLUE;  // idle, setup, boot
 }
 
@@ -225,6 +228,7 @@ bool request(const String &method, const String &path, const String &body, JsonD
   } else {
     code = http.GET();
   }
+  lastHttp = code;
   bool ok = code == 200 && !deserializeJson(out, http.getString());
   if (!ok) Serial.printf("%s %s -> HTTP %d\n", method.c_str(), path.c_str(), code);
   http.end();
@@ -308,6 +312,14 @@ void sendTelemetry() {
   event["rssi"] = WiFi.RSSI();
   event["uptime_s"] = millis() / 1000;
   event["firmware"] = FW_VERSION;
+  // Enough to check the board remotely: is it talking, drawing, and switching?
+  event["free_heap"] = ESP.getFreeHeap();
+  event["last_http"] = lastHttp;
+  event["mode"] = view.mode;
+  event["version"] = view.version;
+  event["presses"] = presses;
+  event["relay_pin"] = digitalRead(PIN_RELAY) == (RELAY_ACTIVE_HIGH ? HIGH : LOW);
+  event["ip"] = WiFi.localIP().toString();
   String body;
   serializeJson(event, body);
   JsonDocument doc;
@@ -321,6 +333,8 @@ bool pressed = false, holdFired = false;
 
 void onTap() {
   Serial.println("tap");
+  presses++;
+  nextTelemetryMs = 0;  // report the press soon
   if (view.mode == "proposal") {
     sendEvent("reject", view.proposalId);
   } else {
@@ -330,6 +344,8 @@ void onTap() {
 
 void onHold() {
   Serial.println("hold");
+  presses++;
+  nextTelemetryMs = 0;
   if (view.mode == "proposal") {
     sendEvent("approve", view.proposalId);
   } else if (view.mode == "waiting" || view.mode == "charging") {
