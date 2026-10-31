@@ -1,4 +1,17 @@
-# Wind Forecast Monitor
+# Wind Forecast Monitor + Wind Buddy
+
+**Hackathon build (Meta Global AI Developer Hackathon, from 27 Oct 2026):** an agent on Meta's
+**Muse Spark** plans flexible demand (an EV charge) into the windiest hours, using a forecast
+corrected for its measured track record. Every figure in its answers is **fact-checked** against
+its tools' results before a plan can reach an **ESP32 device**, where a person approves it with
+a button and the device switches the load. A **watcher** (Muse Spark Open) re-checks approved
+plans as forecasts update. Live app: https://ndivij2004--wind-buddy-web.us-east.modal.run
+(details: [docs/HACKATHON_PLAN.md](docs/HACKATHON_PLAN.md), design and results:
+[docs/DECISIONS.md](docs/DECISIONS.md) part C).
+
+![Agent & device tab](docs/screenshots/agent-view.png)
+
+## The original monitor
 
 A web app for a UK energy supplier's **day-ahead trading desk**. It answers two questions for
 purchase decisions made in **January 2026**:
@@ -116,6 +129,8 @@ curl -s localhost:8000/api/agent/ask -H 'content-type: application/json' \
 | `PLANNER_REASONING_EFFORT` | `low` | How long models think (Meta and Baseten) |
 | `APP_TOKEN` | unset | If set, asking the agent, moving the clock and proposing to a device need header `X-App-Token` |
 | `DEVICE_TOKENS` | unset | `id:token,...`; if set, each device must send its token in `X-Device-Token` |
+| `WATCHER_MODELS` | `modal:muse-glimmer,baseten:meta-models/muse-spark-open-1026` | Models for the watcher's notes, tried in order |
+| `WATCH` | `1` | `0` turns the background watcher off |
 
 ### Refreshing the data
 
@@ -203,6 +218,7 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 | `GET /api/device/{id}/state` | For the ESP32: what to show, and whether its load should be on now |
 | `POST /api/device/{id}/event` | Button presses (approve, reject, stop) and telemetry from the device |
 | `POST /api/device/{id}/propose`, `GET /api/devices` | Send an agent plan to a device; list devices |
+| `POST /api/watch/run`, `GET /api/watch` | Run the watcher now; its recent findings (it also runs every 30 clock-minutes) |
 
 Interactive documentation: `/api/docs`.
 
