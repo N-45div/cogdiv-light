@@ -44,9 +44,16 @@ BELOW_BY = -0.15  # alert if the remaining windows now look this much less windy
 
 WATCH_PROMPT = """\
 You are the watcher for a household's wind-aware EV charging plan in Great Britain. You get the \
-facts of your latest check as JSON. Write one or two short sentences for the person: what changed \
-and what you suggest. Quote figures exactly as given (you may round); never calculate new ones. \
-Times are UK local time.
+facts of your latest check as JSON. Write one or two short sentences (under 220 characters) for \
+the person: what changed and what happens next. Quote figures exactly as given (you may round); \
+never calculate new ones. Times are UK local time.
+
+What the outcome means:
+- better_window: a new plan using better_windows has been sent to their device. They hold the \
+button to switch, or tap to keep the current plan.
+- below_plan: the remaining windows now look less windy than planned and there is no better \
+window before their deadline. Nothing to do; it is for information. The car is already plugged \
+in: don't suggest plugging in or changing anything.
 """
 
 
