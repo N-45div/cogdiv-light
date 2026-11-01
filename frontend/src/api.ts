@@ -224,6 +224,10 @@ export interface DeviceSummary {
   active_id: string | null
   telemetry: Record<string, unknown>
   events: { at: string; event: string }[]
+  /** Firmware offered over the air and not yet running. */
+  update_to?: string | null
+  /** The board's own log lines (last 20, oldest first). */
+  logs?: { at: string; line: string }[]
 }
 
 export interface WatchFinding {

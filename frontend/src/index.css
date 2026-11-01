@@ -700,3 +700,23 @@ summary {
     height: 280px;
   }
 }
+
+.device-log {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.device-log summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.device-log pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--page);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}

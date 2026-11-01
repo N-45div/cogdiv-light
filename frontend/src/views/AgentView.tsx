@@ -380,6 +380,7 @@ function DevicesCard(props: { devices?: DeviceSummary[] }) {
             {d.last_seen && <span>seen {formatUkDateTime(d.last_seen)}</span>}
             {typeof d.telemetry.rssi === 'number' && <span>Wi-Fi {d.telemetry.rssi} dBm</span>}
             {typeof d.telemetry.firmware === 'string' && <span>firmware {d.telemetry.firmware}</span>}
+            {d.update_to && <span className="badge warn">updating to {d.update_to}</span>}
           </div>
           <ul className="events">
             {d.events.slice(0, 5).map((e, i) => (
@@ -388,6 +389,12 @@ function DevicesCard(props: { devices?: DeviceSummary[] }) {
               </li>
             ))}
           </ul>
+          {d.logs && d.logs.length > 0 && (
+            <details className="device-log">
+              <summary>Board log ({d.logs.length} latest lines)</summary>
+              <pre>{d.logs.map((l) => l.line).join('\n')}</pre>
+            </details>
+          )}
         </div>
       ))}
     </Card>
