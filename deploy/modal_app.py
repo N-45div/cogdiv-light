@@ -15,13 +15,22 @@ import modal
 ROOT = Path(__file__).resolve().parent.parent
 BACKEND = ROOT / "backend"
 SITE = ROOT / "frontend" / "dist"  # built by `npm run build`; optional
+FIRMWARE = ROOT / "firmware" / "dist"  # committed; offered to boards over the air
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install_from_requirements(str(BACKEND / "requirements.txt"))
-    .env({"SNAPSHOT_DIR": "/app/data", "STATIC_DIR": "/app/static", "PYTHONPATH": "/app"})
+    .env(
+        {
+            "SNAPSHOT_DIR": "/app/data",
+            "STATIC_DIR": "/app/static",
+            "FIRMWARE_DIR": "/app/firmware",
+            "PYTHONPATH": "/app",
+        }
+    )
     .add_local_dir(BACKEND / "wind_monitor", "/app/wind_monitor")
     .add_local_dir(BACKEND / "data", "/app/data")
+    .add_local_dir(FIRMWARE, "/app/firmware")
 )
 if SITE.is_dir():
     image = image.add_local_dir(SITE, "/app/static")
