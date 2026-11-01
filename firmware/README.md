@@ -97,28 +97,43 @@ can't be reached for 10 minutes, the relay switches off.
 **Wiring the load (low voltage only):** relay module IN → GPIO 14, VCC → 5V, GND → GND; the
 relay switches a USB lamp or fan. Don't switch mains.
 
-## 5. Checking it remotely
+## 5. Checking and updating it remotely
 
-Once the board is on Wi-Fi it polls the server, so it can be checked from anywhere, no laptop
-connection needed (`URL` = server, `APP` = app token):
+Once the board is on Wi-Fi it polls the server, so it can be checked, debugged and updated from
+anywhere, no laptop connection needed (`URL` = server, `APP` = app token):
 
 ```bash
 curl URL/api/devices                       # last seen, Wi-Fi signal, firmware, free memory,
                                            # last HTTP status, screen mode, button presses,
-                                           # relay pin as read back from the board
+                                           # relay pin, app slot, and the last 20 log lines
+curl URL/api/device/desk-1/logs            # the board's log: boot, Wi-Fi, screen and relay
+                                           # changes, presses, errors, updates
 curl -X POST URL/api/device/desk-1/test -H "X-App-Token: APP" \
      -H "Content-Type: application/json" -d '{"relay": true, "seconds": 5}'
                                            # relay on for 5 s: hear it click, see "Relay test"
+curl URL/api/firmware                      # the firmware this server can install
+curl -X POST URL/api/device/desk-1/update -H "X-App-Token: APP" \
+     -H "Content-Type: application/json" -d '{"version": "0.3.0"}'
+                                           # install it over the air ({"cancel": true} withdraws)
 ```
 
-The board reports telemetry every 30 seconds and right after each button press.
+The board reports telemetry every 30 seconds and right after each button press; log lines
+travel with it.
+
+**Over-the-air updates** (from 0.3.0): the server offers the image in `dist/` that was deployed
+with it. The board downloads it (screen: *Updating*, with a progress bar; the load is switched
+off), checks its MD5, and restarts into it. The new firmware runs **on trial**: it keeps itself
+once it reaches the server; if it can't within 3 minutes, or crashes, the board goes back to
+the previous firmware by itself and won't retry that image. So a bad update can't cut the board
+off. Updates need 0.3.0 or later on the board, so the first 0.3.0 goes on by USB (section 1).
 
 ## 6. Building it yourself
 
 ```bash
 pip install platformio
 cd firmware
-pio run                 # builds, and writes dist/windbuddy-explorer.bin
+pio run                 # builds, and writes dist/: windbuddy-explorer.bin (USB, at 0x0),
+                        # windbuddy-app.bin + manifest.json (over the air)
 pio run -t upload       # flash over USB
 pio device monitor      # serial log at 115200
 ```
