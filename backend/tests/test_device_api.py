@@ -1,6 +1,8 @@
 """Device API end to end: ask -> proposal on the device -> hold to approve -> the relay follows
 the replay clock through the night."""
 
+import hashlib
+import json
 from dataclasses import replace
 
 import pytest
@@ -14,6 +16,7 @@ from wind_monitor.agent.runs import RunLog, get_run_log
 from wind_monitor.clock import ReplayClock, get_clock
 from wind_monitor.config import Settings
 from wind_monitor.device import DeviceRegistry, get_registry
+from wind_monitor.firmware import get_firmware, load_image
 from wind_monitor.main import create_app
 
 QUESTION = "I need 14 kWh at 7 kW, when should I charge?"
@@ -34,6 +37,7 @@ def client(clock) -> TestClient:
     app.dependency_overrides[agent_api.get_planner] = lambda: planner
     app.dependency_overrides[get_run_log] = lambda: log
     app.dependency_overrides[get_registry] = lambda: registry
+    app.dependency_overrides[get_firmware] = lambda: None
     return TestClient(app)
 
 
@@ -146,3 +150,95 @@ def test_rich_telemetry_is_kept(client):
     telemetry = client.get("/api/devices").json()[0]["telemetry"]
     assert telemetry["relay_pin"] is True and telemetry["presses"] == 2
     assert telemetry["last_http"] == 200 and telemetry["mode"] == "charging"
+
+
+def _write_image(folder, version="0.3.0", data=b"\xe9 firmware bytes", **manifest):
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "windbuddy-app.bin").write_bytes(data)
+    info = {
+        "version": version,
+        "app": "windbuddy-app.bin",
+        "size": len(data),
+        "md5": hashlib.md5(data).hexdigest(),
+    }
+    (folder / "manifest.json").write_text(json.dumps({**info, **manifest}))
+    return load_image(folder)
+
+
+def test_over_the_air_update(client, tmp_path):
+    image = _write_image(tmp_path)
+    client.app.dependency_overrides[get_firmware] = lambda: image
+    assert client.get("/api/firmware").json()["version"] == "0.3.0"
+    assert _state(client).json()["update"] is None  # nothing is offered until asked
+
+    asked = client.post("/api/device/desk-1/update", json={"version": "0.3.0"}).json()
+    offer = asked["update"]
+    assert offer["path"] == "/api/device/desk-1/firmware" and offer["md5"] == image.md5
+    assert _state(client).json()["update"] == offer
+    assert client.get("/api/devices").json()[0]["update_to"] == "0.3.0"
+
+    download = client.get(offer["path"])
+    assert download.status_code == 200 and download.content == b"\xe9 firmware bytes"
+    assert download.headers["x-firmware-md5"] == image.md5
+    assert int(download.headers["content-length"]) == offer["size"]
+
+    # The device restarts into the new firmware and says so: the offer is withdrawn.
+    client.post("/api/device/desk-1/event", json={"type": "telemetry", "firmware": "0.3.0"})
+    assert _state(client).json()["update"] is None
+    listed = client.get("/api/devices").json()[0]
+    assert listed["update_to"] is None and listed["events"][0]["event"] == "updated to 0.3.0"
+
+
+def test_update_guards(client, tmp_path, monkeypatch):
+    assert client.post("/api/device/desk-1/update", json={}).status_code == 404  # no image
+    image = _write_image(tmp_path)
+    client.app.dependency_overrides[get_firmware] = lambda: image
+    wrong = client.post("/api/device/desk-1/update", json={"version": "9.9"})
+    assert wrong.status_code == 409
+
+    client.post("/api/device/desk-1/update", json={})
+    cancelled = client.post("/api/device/desk-1/update", json={"cancel": True}).json()
+    assert cancelled["update"] is None
+
+    monkeypatch.setenv("APP_TOKEN", "letmein")
+    assert client.post("/api/device/desk-1/update", json={}).status_code == 401
+    monkeypatch.setenv("DEVICE_TOKENS", "desk-1:s3cret")
+    assert client.get("/api/device/desk-1/firmware").status_code == 401
+    ok = client.get("/api/device/desk-1/firmware", headers={"X-Device-Token": "s3cret"})
+    assert ok.status_code == 200
+
+
+def test_a_device_already_running_the_version_is_not_offered_it(client, tmp_path):
+    image = _write_image(tmp_path)
+    client.app.dependency_overrides[get_firmware] = lambda: image
+    client.post("/api/device/desk-1/event", json={"type": "telemetry", "firmware": "0.3.0"})
+    client.post("/api/device/desk-1/update", json={})
+    assert _state(client).json()["update"] is None
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [{"md5": "0" * 32}, {"size": 3}, {"app": "missing.bin"}],
+)
+def test_a_broken_image_is_never_offered(tmp_path, manifest):
+    assert _write_image(tmp_path, **manifest) is None
+    assert load_image(tmp_path / "nowhere") is None
+
+
+def test_logs_arrive_with_any_event(client):
+    lines = ["[12s] boot 0.3.0 (power on)", "[13s] wifi ok -61 dBm"]
+    client.post("/api/device/desk-1/event", json={"type": "telemetry", "log": lines})
+    listed = client.get("/api/devices").json()[0]
+    assert [entry["line"] for entry in listed["logs"]] == lines
+    assert "log" not in listed["telemetry"]
+    client.post("/api/device/desk-1/event", json={"type": "stop", "log": ["[20s] hold"]})
+    logs = client.get("/api/device/desk-1/logs").json()
+    assert [entry["line"] for entry in logs] == [*lines, "[20s] hold"]
+    assert client.get("/api/device/porch/logs").status_code == 404
+
+
+def test_log_lines_are_bounded(client):
+    too_long = {"type": "telemetry", "log": ["x" * 201]}
+    too_many = {"type": "telemetry", "log": ["x"] * 51}
+    for event in (too_long, too_many):
+        assert client.post("/api/device/desk-1/event", json=event).status_code == 422

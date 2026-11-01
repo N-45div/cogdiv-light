@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class CutoffPresetOut(BaseModel):
@@ -396,6 +397,27 @@ class DeviceEvent(BaseModel):
     presses: int | None = Field(None, description="Button presses since boot")
     relay_pin: bool | None = Field(None, description="Relay pin as read back from the board")
     ip: str | None = None
+    partition: str | None = Field(None, description="Running app slot: app0 or app1")
+    log: list[Annotated[str, StringConstraints(max_length=200)]] | None = Field(
+        None, max_length=50, description="Log lines since the last event (any event type)"
+    )
+
+
+class FirmwareOut(BaseModel):
+    version: str
+    size: int = Field(description="Bytes")
+    md5: str
+
+
+class FirmwareOffer(FirmwareOut):
+    path: str = Field(description="GET this (with the device token) for the image")
+
+
+class UpdateRequest(BaseModel):
+    version: str | None = Field(
+        None, description="Must match the server's image if given (a guard against surprises)"
+    )
+    cancel: bool = Field(False, description="Withdraw a pending update offer")
 
 
 class RelayTest(BaseModel):
@@ -419,6 +441,7 @@ class DeviceView(BaseModel):
     prompt: str | None = Field(None, description="Button hint, e.g. 'hold:yes  tap:no'")
     proposal_id: str | None = Field(None, description="Send this back with approve/reject")
     poll_seconds: int
+    update: FirmwareOffer | None = Field(None, description="Firmware to install, if requested")
 
 
 class DeviceSummary(BaseModel):
@@ -429,6 +452,8 @@ class DeviceSummary(BaseModel):
     active_id: str | None
     telemetry: dict
     events: list[dict]
+    update_to: str | None = Field(None, description="Firmware offered, not yet running")
+    logs: list[dict] = Field(description="The device's last log lines, oldest first")
 
 
 # ---- watcher ----------------------------------------------------------------------------

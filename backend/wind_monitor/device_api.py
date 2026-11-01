@@ -3,6 +3,9 @@
 A device polls GET /api/device/{id}/state every few seconds. If DEVICE_TOKENS is set
 ("desk-1:secret,porch:other"), each device must send its token in the X-Device-Token header;
 without it (local development) any device id is accepted.
+
+Remote care: devices send log lines with their events (GET /api/device/{id}/logs), and
+POST /api/device/{id}/update offers them the server's firmware image over the air.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from typing import Annotated
 
 import pandas as pd
 from fastapi import APIRouter, Depends, Header, HTTPException, Path
+from fastapi.responses import FileResponse
 
 from . import outlook as ol
 from .agent.runs import RunLog, get_run_log
@@ -25,14 +29,17 @@ from .device import (
     get_registry,
     screen,
 )
+from .firmware import FirmwareImage, get_firmware
 from .planning_api import ClockDep, PlanningDataDep, require_app_token
 from .schemas import (
     DEVICE_ID_PATTERN,
     DeviceEvent,
     DeviceSummary,
     DeviceView,
+    FirmwareOut,
     ProposeRequest,
     RelayTest,
+    UpdateRequest,
 )
 from .store import WindData
 
@@ -42,6 +49,8 @@ POLL_SECONDS = 5
 DeviceId = Annotated[str, Path(pattern=DEVICE_ID_PATTERN)]
 RegistryDep = Annotated[DeviceRegistry, Depends(get_registry)]
 RunLogDep = Annotated[RunLog, Depends(get_run_log)]
+FirmwareDep = Annotated[FirmwareImage | None, Depends(get_firmware)]
+SUMMARY_LOG_LINES = 20
 
 
 def device_tokens() -> dict[str, str]:
@@ -61,7 +70,21 @@ def authorised_device(
 AuthorisedDevice = Annotated[str, Depends(authorised_device)]
 
 
-def view(state: DeviceState, now, data: WindData) -> dict:
+def offer(state: DeviceState, image: FirmwareImage | None) -> dict | None:
+    """The firmware to install: only the version asked for, and only until the device runs it."""
+    if image is None or state.update_to != image.version:
+        return None
+    if state.telemetry.get("firmware") == image.version:
+        return None
+    return {
+        "version": image.version,
+        "size": image.size,
+        "md5": image.md5,
+        "path": f"/api/device/{state.device_id}/firmware",
+    }
+
+
+def view(state: DeviceState, now, data: WindData, image: FirmwareImage | None = None) -> dict:
     real_now = pd.Timestamp.now(tz="UTC")
     return {
         "device_id": state.device_id,
@@ -71,17 +94,22 @@ def view(state: DeviceState, now, data: WindData) -> dict:
         "relay": effective_relay(state, now, real_now),
         "proposal_id": state.proposal.id if state.proposal else None,
         "poll_seconds": POLL_SECONDS,
+        "update": offer(state, image),
         **screen(state, now, ol.latest_actual(data, now), real_now),
     }
 
 
 @router.get("/device/{device_id}/state", response_model=DeviceView)
 def device_state(
-    device_id: AuthorisedDevice, clock: ClockDep, data: PlanningDataDep, registry: RegistryDep
+    device_id: AuthorisedDevice,
+    clock: ClockDep,
+    data: PlanningDataDep,
+    registry: RegistryDep,
+    image: FirmwareDep,
 ) -> dict:
     """What the device should show, and whether its load should be on right now."""
     now = clock.now()
-    return view(registry.seen(device_id, now), now, data)
+    return view(registry.seen(device_id, now), now, data, image)
 
 
 @router.post("/device/{device_id}/event", response_model=DeviceView)
@@ -91,14 +119,16 @@ def device_event(
     clock: ClockDep,
     data: PlanningDataDep,
     registry: RegistryDep,
+    image: FirmwareDep,
 ) -> dict:
-    """A button press (approve / reject / stop) or telemetry from the device."""
+    """A button press (approve / reject / stop) or telemetry from the device, with any log
+    lines it has collected since its last event."""
     now = clock.now()
     try:
         state = registry.event(device_id, event.model_dump(exclude_none=True), now)
     except DeviceError as exc:
         raise HTTPException(409, str(exc)) from exc
-    return view(state, now, data)
+    return view(state, now, data, image)
 
 
 @router.post(
@@ -146,6 +176,60 @@ def relay_test(
     return view(state, clock.now(), data)
 
 
+@router.get("/firmware", response_model=FirmwareOut | None)
+def firmware(image: FirmwareDep) -> dict | None:
+    """The firmware image this server can install over the air (null if it has none)."""
+    if image is None:
+        return None
+    return {"version": image.version, "size": image.size, "md5": image.md5}
+
+
+@router.post(
+    "/device/{device_id}/update",
+    response_model=DeviceView,
+    dependencies=[Depends(require_app_token)],
+)
+def request_update(
+    device_id: DeviceId,
+    request: UpdateRequest,
+    clock: ClockDep,
+    data: PlanningDataDep,
+    registry: RegistryDep,
+    image: FirmwareDep,
+) -> dict:
+    """Offer the server's firmware image to a device. It installs it on its next poll and
+    restarts; if the new firmware can't reach the server, the board rolls back by itself."""
+    now = clock.now()
+    if request.cancel:
+        return view(registry.request_update(device_id, None, now), now, data, image)
+    if image is None:
+        raise HTTPException(404, "This server has no firmware image")
+    if request.version and request.version != image.version:
+        raise HTTPException(409, f"This server has firmware {image.version}, not {request.version}")
+    return view(registry.request_update(device_id, image.version, now), now, data, image)
+
+
+@router.get("/device/{device_id}/firmware", response_class=FileResponse)
+def firmware_image(device_id: AuthorisedDevice, image: FirmwareDep) -> FileResponse:
+    """The app image itself, for the device (needs its token when DEVICE_TOKENS is set)."""
+    if image is None:
+        raise HTTPException(404, "This server has no firmware image")
+    return FileResponse(
+        image.path,
+        media_type="application/octet-stream",
+        headers={"X-Firmware-Version": image.version, "X-Firmware-MD5": image.md5},
+    )
+
+
+@router.get("/device/{device_id}/logs", response_model=list[dict])
+def device_logs(device_id: DeviceId, registry: RegistryDep) -> list[dict]:
+    """Everything the device has logged lately, oldest first."""
+    state = next((s for s in registry.all() if s.device_id == device_id), None)
+    if state is None:
+        raise HTTPException(404, "No such device")
+    return list(state.logs)
+
+
 @router.get("/devices", response_model=list[DeviceSummary])
 def devices(registry: RegistryDep) -> list[dict]:
     return [
@@ -157,6 +241,8 @@ def devices(registry: RegistryDep) -> list[dict]:
             "active_id": s.active.id if s.active else None,
             "telemetry": s.telemetry,
             "events": list(s.events)[:10],
+            "update_to": s.update_to,
+            "logs": list(s.logs)[-SUMMARY_LOG_LINES:],
         }
         for s in registry.all()
     ]

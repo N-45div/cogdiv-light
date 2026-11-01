@@ -23,6 +23,8 @@ PAST = {"approve": "approved", "reject": "rejected"}
 # Characters per line on the 128x160 ST7735 at text size 1 (6x8 px font).
 SCREEN_WIDTH = 21
 MAX_WINDOW_LINES = 3
+# Log lines the device sent, kept per device so it can be debugged without a USB cable.
+MAX_LOG_LINES = 200
 
 
 @dataclass
@@ -71,6 +73,9 @@ class DeviceState:
     # A remote relay test (real time, not the planning clock) overrides the plan while it runs.
     test_relay: bool = False
     test_until: pd.Timestamp | None = None
+    # Firmware version the device was asked to install; cleared once it reports running it.
+    update_to: str | None = None
+    logs: deque = field(default_factory=lambda: deque(maxlen=MAX_LOG_LINES))
 
     def testing(self, real_now: pd.Timestamp) -> bool:
         return self.test_until is not None and real_now < self.test_until
@@ -205,6 +210,9 @@ class DeviceRegistry:
         with self._lock:
             state = self._get(device_id)
             state.last_seen = now.isoformat()
+            received = pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")
+            for line in event.get("log") or []:
+                state.logs.append({"at": received, "line": line})
             if kind in ("approve", "reject"):
                 pending = state.proposal
                 if pending is None or event.get("proposal_id") != pending.id:
@@ -220,7 +228,10 @@ class DeviceRegistry:
                     state.active = None
                     state.alert = None
             elif kind == "telemetry":
-                state.telemetry = {k: v for k, v in event.items() if k != "type"}
+                state.telemetry = {k: v for k, v in event.items() if k not in ("type", "log")}
+                if state.update_to and state.telemetry.get("firmware") == state.update_to:
+                    state.changed(f"updated to {state.update_to}", now)
+                    state.update_to = None
             else:
                 raise DeviceError(f"Unknown event type {kind!r}")
             return state
@@ -250,6 +261,14 @@ class DeviceRegistry:
             state.test_relay = relay
             state.test_until = real_now + pd.Timedelta(seconds=seconds)
             state.changed(f"relay test: {'on' if relay else 'off'} for {seconds} s", real_now)
+            return state
+
+    def request_update(self, device_id: str, version: str | None, now: pd.Timestamp) -> DeviceState:
+        """Offer firmware `version` to the device on its next poll (None cancels the offer)."""
+        with self._lock:
+            state = self._get(device_id)
+            state.update_to = version
+            state.changed(f"update to {version} requested" if version else "update cancelled", now)
             return state
 
     def seen(self, device_id: str, now: pd.Timestamp) -> DeviceState:
