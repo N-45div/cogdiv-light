@@ -3,8 +3,15 @@
 //
 // The device is deliberately simple: the server (backend/wind_monitor/device_api.py) decides
 // everything, including the screen text, and the device polls it every few seconds:
-//   GET  {server}/api/device/{id}/state   -> what to show, and whether the relay is on
-//   POST {server}/api/device/{id}/event   -> button presses (approve/reject/stop), telemetry
+//   GET  {server}/api/device/{id}/state     -> what to show, whether the relay is on, and
+//                                              firmware to install (only when asked for)
+//   POST {server}/api/device/{id}/event     -> button presses (approve/reject/stop), telemetry,
+//                                              and the log lines collected since the last event
+//   GET  {server}/api/device/{id}/firmware  -> the new app image, for over-the-air updates
+//
+// Remote care: after one flash from the browser, the board can be updated and debugged over
+// the internet. A new firmware runs "on trial": it is kept once it has reached the server, and
+// if it can't within 3 minutes (or crashes) the board goes back to the previous one by itself.
 //
 // First boot (or BOOT held for 10 s): the board opens a Wi-Fi hotspot "WindBuddy-Setup"
 // (password "windsetup"). Join it from a phone, pick your Wi-Fi, and enter the server URL,
@@ -18,9 +25,12 @@
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <SPI.h>
+#include <Update.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <WiFiManager.h>
+#include <esp_ota_ops.h>
+#include <stdarg.h>
 
 #include "board.h"
 
@@ -37,6 +47,9 @@ static const uint32_t HOLD_MS = 1000;             // longer press = hold (fires 
 static const uint32_t RESET_HOLD_MS = 10000;      // hold this long: forget Wi-Fi, open setup
 static const uint32_t TELEMETRY_EVERY_MS = 30000;
 static const uint32_t OFFLINE_RELAY_OFF_MS = 10UL * 60UL * 1000UL;
+static const uint32_t TRIAL_MS = 3UL * 60UL * 1000UL;            // new firmware must reach the
+                                                                  // server within this, or roll back
+static const uint32_t UPDATE_RETRY_MS = 10UL * 60UL * 1000UL;    // after a failed download
 
 struct Settings {
   String server;  // e.g. https://wind-buddy.example.com (no trailing slash)
@@ -69,6 +82,42 @@ int lastHttp = 0;        // last HTTP status from the server (reported in teleme
 uint32_t presses = 0;    // button presses since boot (reported in telemetry)
 bool relayState = false;
 
+// ---- log -------------------------------------------------------------------------------------
+// Lines go to the serial port and ride along with the next event to the server
+// (GET /api/device/{id}/logs), so the board can be debugged without a cable.
+
+static const int LOG_KEEP = 30;
+String logRing[LOG_KEEP];
+int logStart = 0, logCount = 0;
+
+void logLine(const char *fmt, ...) {
+  char text[160];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(text, sizeof(text), fmt, args);
+  va_end(args);
+  String line = String("[") + (millis() / 1000) + "s] " + text;
+  Serial.println(line);
+  if (logCount == LOG_KEEP) {  // full: drop the oldest
+    logStart = (logStart + 1) % LOG_KEEP;
+    logCount--;
+  }
+  logRing[(logStart + logCount) % LOG_KEEP] = line;
+  logCount++;
+}
+
+int attachLogs(JsonDocument &event) {
+  JsonArray lines = event["log"].to<JsonArray>();
+  for (int i = 0; i < logCount; i++) lines.add(logRing[(logStart + i) % LOG_KEEP]);
+  return logCount;
+}
+
+void dropLogs(int sent) {  // the server has these now
+  sent = min(sent, logCount);
+  logStart = (logStart + sent) % LOG_KEEP;
+  logCount -= sent;
+}
+
 // ---- relay and LED ---------------------------------------------------------------------------
 
 void setRelay(bool on) {
@@ -92,6 +141,7 @@ uint16_t modeColor(const String &mode) {
   if (mode == "done") return COLOR_GREY;
   if (mode == "offline" || mode == "error") return ST77XX_RED;
   if (mode == "test") return ST77XX_MAGENTA;
+  if (mode == "update") return 0x780F;  // purple
   return ST77XX_BLUE;  // idle, setup, boot
 }
 
@@ -206,12 +256,7 @@ void connectWifi(bool forcePortal) {
 
 // ---- talking to the server -------------------------------------------------------------------
 
-bool request(const String &method, const String &path, const String &body, JsonDocument &out) {
-  if (settings.server.isEmpty()) return false;
-  String url = settings.server + path;
-  HTTPClient http;
-  WiFiClientSecure secure;
-  WiFiClient plain;
+void beginHttp(HTTPClient &http, WiFiClientSecure &secure, WiFiClient &plain, const String &url) {
   if (url.startsWith("https://")) {
     // Hackathon trade-off: the server certificate is not checked. Pin a root CA before real use.
     secure.setInsecure();
@@ -219,8 +264,16 @@ bool request(const String &method, const String &path, const String &body, JsonD
   } else {
     http.begin(plain, url);  // e.g. a laptop on the same network
   }
-  http.setTimeout(15000);
   if (settings.token.length()) http.addHeader("X-Device-Token", settings.token);
+}
+
+bool request(const String &method, const String &path, const String &body, JsonDocument &out) {
+  if (settings.server.isEmpty()) return false;
+  HTTPClient http;
+  WiFiClientSecure secure;
+  WiFiClient plain;
+  beginHttp(http, secure, plain, settings.server + path);
+  http.setTimeout(15000);
   int code;
   if (method == "POST") {
     http.addHeader("Content-Type", "application/json");
@@ -228,14 +281,16 @@ bool request(const String &method, const String &path, const String &body, JsonD
   } else {
     code = http.GET();
   }
-  lastHttp = code;
   bool ok = code == 200 && !deserializeJson(out, http.getString());
-  if (!ok) Serial.printf("%s %s -> HTTP %d\n", method.c_str(), path.c_str(), code);
+  // Log changes only, so an offline board doesn't fill the log with the same line.
+  if (!ok && code != lastHttp) logLine("%s %s -> HTTP %d", method.c_str(), path.c_str(), code);
+  lastHttp = code;
   http.end();
   return ok;
 }
 
 void apply(JsonDocument &doc) {
+  String previousMode = view.mode;
   bool relay = doc["relay"] | false;
   int version = doc["version"] | 0;
   String mode = doc["mode"] | "idle";
@@ -258,7 +313,11 @@ void apply(JsonDocument &doc) {
   view.lineCount = count;
   for (int i = 0; i < count; i++) view.lines[i] = lines[i];
 
-  if (relay != relayState) setRelay(relay);
+  if (mode != previousMode) logLine("screen: %s (v%d)", mode.c_str(), version);
+  if (relay != relayState) {
+    logLine("relay %s", relay ? "ON" : "off");
+    setRelay(relay);
+  }
   if (changed) {
     drawAll();
   } else if (nowUk != view.nowUk) {
@@ -272,22 +331,31 @@ String devicePath(const char *what) {
   return String("/api/device/") + settings.device + "/" + what;
 }
 
+void maybeUpdate(JsonDocument &doc);
+void confirmFirmware();
+bool onTrial = false;  // running new over-the-air firmware that hasn't reached the server yet
+
 void poll() {
   JsonDocument doc;
   if (request("GET", devicePath("state"), "", doc)) {
+    if (failedPolls >= 3) logLine("server back after %d failed polls", failedPolls);
     lastOkMs = millis();
     failedPolls = 0;
+    if (onTrial) confirmFirmware();
     apply(doc);
+    maybeUpdate(doc);
     return;
   }
   failedPolls++;
   if (failedPolls == 3) {
+    logLine("offline: 3 polls failed (HTTP %d)", lastHttp);
     showMessage("offline", "No connection",
                 {settings.server.isEmpty() ? "No server URL set" : "Server not reachable",
                  "Retrying...", "Hold BOOT 10 s", "to change settings"});
   }
   if (relayState && millis() - lastOkMs > OFFLINE_RELAY_OFF_MS) {
     setRelay(false);  // fail safe: never leave the load on without the server
+    logLine("relay off: no server for 10 min");
     drawAll();
   }
 }
@@ -296,12 +364,16 @@ void sendEvent(const char *type, const String &proposalId = "") {
   JsonDocument event;
   event["type"] = type;
   if (proposalId.length()) event["proposal_id"] = proposalId;
+  int sent = attachLogs(event);
   String body;
   serializeJson(event, body);
   JsonDocument doc;
   if (request("POST", devicePath("event"), body, doc)) {
+    dropLogs(sent);
     lastOkMs = millis();
     apply(doc);
+  } else {
+    logLine("%s not accepted (HTTP %d)", type, lastHttp);
   }
 }
 
@@ -320,11 +392,127 @@ void sendTelemetry() {
   event["presses"] = presses;
   event["relay_pin"] = digitalRead(PIN_RELAY) == (RELAY_ACTIVE_HIGH ? HIGH : LOW);
   event["ip"] = WiFi.localIP().toString();
+  event["partition"] = esp_ota_get_running_partition()->label;  // app0 / app1: flips per update
+  int sent = attachLogs(event);
   String body;
   serializeJson(event, body);
   JsonDocument doc;
-  request("POST", devicePath("event"), body, doc);
+  if (request("POST", devicePath("event"), body, doc)) dropLogs(sent);
 }
+
+// ---- over-the-air updates --------------------------------------------------------------------
+
+String triedMd5;            // an update that restarted but never confirmed: don't retry it
+String failedMd5;           // a download that failed just now: retry after UPDATE_RETRY_MS
+uint32_t retryUpdateAtMs = 0;
+bool skipLogged = false;
+
+void drawProgress(size_t done, size_t total) {
+  int width = tft.width() - 16;
+  int filled = total ? (int)((uint64_t)width * done / total) : 0;
+  tft.fillRect(8, 100, filled, 8, ST77XX_GREEN);
+}
+
+void installUpdate(const String &version, const String &path, size_t size, const String &md5) {
+  logLine("update %s: downloading %u bytes", version.c_str(), (unsigned)size);
+  setRelay(false);  // the load stays off while the board restarts; the plan resumes after
+  showMessage("update", "Updating", {String("firmware ") + version, "Don't unplug", "~30 s"});
+  tft.drawRect(7, 99, tft.width() - 14, 10, ST77XX_WHITE);
+
+  HTTPClient http;
+  WiFiClientSecure secure;
+  WiFiClient plain;
+  beginHttp(http, secure, plain, settings.server + path);
+  http.setTimeout(30000);
+  int code = http.GET();
+  String error;
+  if (code != 200) {
+    error = String("HTTP ") + code;
+  } else if (http.getSize() != (int)size) {
+    error = String("size ") + http.getSize() + ", expected " + size;
+  } else if (!Update.begin(size)) {
+    error = Update.errorString();
+  } else {
+    Update.setMD5(md5.c_str());  // Update.end() fails if the image doesn't match
+    Update.onProgress(drawProgress);
+    size_t written = Update.writeStream(*http.getStreamPtr());
+    if (written != size) {
+      error = String("got ") + written + " of " + size + " bytes";
+      Update.abort();
+    } else if (!Update.end()) {
+      error = Update.errorString();
+    }
+  }
+  http.end();
+
+  if (error.length()) {
+    logLine("update %s failed: %s", version.c_str(), error.c_str());
+    failedMd5 = md5;
+    retryUpdateAtMs = millis() + UPDATE_RETRY_MS;
+    showMessage("error", "Update failed", {error.substring(0, 21), "Still on " FW_VERSION,
+                                           "Retry in 10 min"});
+    delay(3000);
+    nextTelemetryMs = 0;  // tell the server soon
+    return;
+  }
+  prefs.begin("windbuddy", false);
+  prefs.putString("otamd5", md5);  // cleared by the new firmware once it reaches the server
+  prefs.putString("otaver", version);
+  prefs.end();
+  logLine("update %s: written and checked, restarting", version.c_str());
+  sendTelemetry();  // so the server has the log before the restart
+  showMessage("update", "Updated", {String("firmware ") + version, "Restarting..."});
+  delay(1000);
+  ESP.restart();
+}
+
+void maybeUpdate(JsonDocument &doc) {
+  JsonVariant offer = doc["update"];
+  if (offer.isNull()) return;
+  String version = offer["version"] | "";
+  String path = offer["path"] | "";
+  String md5 = offer["md5"] | "";
+  size_t size = offer["size"] | 0;
+  if (version.isEmpty() || version == FW_VERSION || path.isEmpty() || md5.length() != 32) return;
+  if (md5 == triedMd5) {
+    if (!skipLogged) logLine("not retrying %s: it was rolled back", version.c_str());
+    skipLogged = true;
+    return;
+  }
+  if (md5 == failedMd5 && (int32_t)(millis() - retryUpdateAtMs) < 0) return;
+  installUpdate(version, path, size, md5);
+}
+
+// The app keeps a new firmware only after confirmFirmware() (see verifyRollbackLater below).
+bool runningOnTrial() {
+  esp_ota_img_states_t state;
+  return esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
+         state == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
+void confirmFirmware() {
+  esp_ota_mark_app_valid_cancel_rollback();
+  onTrial = false;
+  triedMd5 = "";
+  prefs.begin("windbuddy", false);
+  prefs.remove("otamd5");
+  prefs.remove("otaver");
+  prefs.end();
+  logLine("firmware %s confirmed: it reached the server", FW_VERSION);
+}
+
+void giveUpTrial() {
+  logLine("firmware %s never reached the server: rolling back", FW_VERSION);
+  setRelay(false);
+  showMessage("error", "Update failed", {"No server in 3 min", "Going back to the", "old firmware"});
+  delay(2000);
+  esp_ota_mark_app_invalid_rollback_and_reboot();  // only returns if there's nothing to go back to
+  onTrial = false;
+  logLine("no previous firmware to go back to: keeping %s", FW_VERSION);
+}
+
+// Tells the Arduino core not to accept a new firmware at boot: confirmFirmware() does that.
+bool verifyRollbackLater() { return true; }
 
 // ---- button ----------------------------------------------------------------------------------
 
@@ -332,7 +520,7 @@ uint32_t pressedAt = 0;
 bool pressed = false, holdFired = false;
 
 void onTap() {
-  Serial.println("tap");
+  logLine("tap (%s)", view.mode.c_str());
   presses++;
   nextTelemetryMs = 0;  // report the press soon
   if (view.mode == "proposal") {
@@ -343,7 +531,7 @@ void onTap() {
 }
 
 void onHold() {
-  Serial.println("hold");
+  logLine("hold (%s)", view.mode.c_str());
   presses++;
   nextTelemetryMs = 0;
   if (view.mode == "proposal") {
@@ -381,9 +569,24 @@ void readButton() {
 
 // ---- main ------------------------------------------------------------------------------------
 
+const char *resetReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power on";
+    case ESP_RST_SW: return "restart";
+    case ESP_RST_PANIC: return "crash";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_EXT: return "reset pin";
+    default: return "other";
+  }
+}
+
 void setup() {
   Serial.begin(115200);
-  Serial.printf("\nWind Buddy %s\n", FW_VERSION);
+  logLine("Wind Buddy %s, %s, running %s", FW_VERSION, resetReason(),
+          esp_ota_get_running_partition()->label);
   pinMode(PIN_BUTTON, INPUT_PULLUP);
   pinMode(PIN_RELAY, OUTPUT);
   setRelay(false);
@@ -391,26 +594,45 @@ void setup() {
   digitalWrite(PIN_TFT_BL, HIGH);
 
   loadSettings();
+  onTrial = runningOnTrial();
+  prefs.begin("windbuddy", true);
+  triedMd5 = prefs.getString("otamd5", "");
+  String triedVersion = prefs.getString("otaver", "");
+  prefs.end();
+  if (onTrial) {
+    logLine("new firmware on trial: must reach the server within 3 min");
+  } else if (triedMd5.length()) {
+    logLine("update %s was rolled back: staying on %s", triedVersion.c_str(), FW_VERSION);
+  }
   SPI.begin(PIN_TFT_SCLK, -1, PIN_TFT_MOSI, PIN_TFT_CS);
   tft.initR(INITR_BLACKTAB);
   tft.setRotation(settings.rotation);
   showMessage("boot", "Wind Buddy", {String("firmware ") + FW_VERSION, "Connecting Wi-Fi..."});
 
   connectWifi(false);
+  logLine("Wi-Fi %s, %d dBm, ip %s", WiFi.SSID().c_str(), WiFi.RSSI(),
+          WiFi.localIP().toString().c_str());
   showMessage("boot", "Wind Buddy", {"Wi-Fi connected", WiFi.localIP().toString(),
                                      settings.server.isEmpty() ? "No server URL set!"
                                                                : "Asking the server..."});
   lastOkMs = millis();
 }
 
+bool wifiWasDown = false;
+
 void loop() {
   readButton();
   uint32_t now = millis();
+  if (onTrial && now > TRIAL_MS) giveUpTrial();
   if (WiFi.status() != WL_CONNECTED) {
+    if (!wifiWasDown) logLine("Wi-Fi lost, reconnecting");
+    wifiWasDown = true;
     WiFi.reconnect();
     delay(500);
     return;
   }
+  if (wifiWasDown) logLine("Wi-Fi back, %d dBm", WiFi.RSSI());
+  wifiWasDown = false;
   if ((int32_t)(now - nextPollMs) >= 0) {
     poll();
     nextPollMs = millis() + view.pollMs;
