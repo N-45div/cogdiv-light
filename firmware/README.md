@@ -28,6 +28,16 @@ You need Chrome or Edge and a USB-C cable that carries data.
    corrupt each other). Wait for *Hash of data verified*.
 6. Press **RST** (or unplug and replug).
 
+**Quickest: flash and set up in one command, no phone.** It asks for the Wi-Fi name, Wi-Fi
+password and device token at hidden prompts and writes them to the board with the firmware
+(about 5 MB of Python tools, no compiler). If the Wi-Fi details are wrong, the board falls back
+to the phone setup hotspot.
+
+```powershell
+py -m pip install esptool esp-idf-nvs-partition-gen
+py firmware/provision.py            # hold BOOT, tap RST, release BOOT when it says so
+```
+
 **Or from a terminal** (Python), with the board in flashing mode (hold BOOT, tap RST):
 
 ```powershell
