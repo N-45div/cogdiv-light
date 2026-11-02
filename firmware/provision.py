@@ -36,6 +36,20 @@ IMAGE = HERE / "dist" / "windbuddy-explorer.bin"
 NVS_OFFSET, NVS_SIZE = 0x9000, 0x5000  # default_16MB.csv
 DEFAULT_SERVER = "https://ndivij2004--wind-buddy-web.us-east.modal.run"
 ESPRESSIF_VID = 0x303A
+# Optional, never committed (.gitignore): "wifi_name = ...", "wifi_password = ...",
+# "device_token = ..." lines, so the script runs with no questions.
+LOCAL_SETTINGS = HERE / "device.local.ini"
+
+
+def read_local_settings() -> dict[str, str]:
+    if not LOCAL_SETTINGS.exists():
+        return {}
+    values = {}
+    for line in LOCAL_SETTINGS.read_text(encoding="utf-8-sig").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not key.strip().startswith("#") and value.strip():
+            values[key.strip()] = value.strip()
+    return values
 
 
 def find_port(wait_s: float) -> str:
@@ -139,13 +153,19 @@ def main() -> int:
 
     if not IMAGE.exists():
         sys.exit(f"Missing {IMAGE}: run `pio run` in firmware/ or git pull")
+    local = read_local_settings()
+    if local:
+        print(f"Using {LOCAL_SETTINGS.name} (values not shown)")
     wifi = None
     if not args.no_wifi:
-        ssid = args.ssid or input("Wi-Fi name (2.4 GHz): ").strip()
-        wifi = (ssid, getpass.getpass("Wi-Fi password (hidden): "))
-    token = os.environ.get("WINDBUDDY_TOKEN") or getpass.getpass(
-        "Device token (hidden; Enter if the server uses none): "
-    )
+        ssid = args.ssid or local.get("wifi_name") or input("Wi-Fi name (2.4 GHz): ").strip()
+        password = local.get("wifi_password")
+        if password is None:
+            password = getpass.getpass("Wi-Fi password (hidden): ")
+        wifi = (ssid, password)
+    token = os.environ.get("WINDBUDDY_TOKEN") or local.get("device_token")
+    if token is None:
+        token = getpass.getpass("Device token (hidden; Enter if the server uses none): ")
     settings = {
         "server": args.server.strip().rstrip("/"),
         "device": args.device,

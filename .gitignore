@@ -24,3 +24,6 @@ frontend/dist/
 
 # Vercel local state
 .vercel
+
+# Board settings with Wi-Fi password and device token (firmware/provision.py)
+firmware/device.local.ini
