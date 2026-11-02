@@ -17,14 +17,27 @@ You need Chrome or Edge and a USB-C cable that carries data.
 
 1. **Download** [`dist/windbuddy-explorer.bin`](dist/windbuddy-explorer.bin) (on GitHub: open
    the file, then *Download raw file*).
-2. Plug the board into the laptop. In **Device Manager → Ports (COM & LPT)** a new COM port
-   should appear. If none does, install the USB-serial driver for the chip on the board
-   (usually CH343/CH340 or CP210x) and plug it in again.
+2. Plug the board into the laptop. In **Device Manager → Ports (COM & LPT)** it shows as
+   **USB Serial Device (COMx)**: the ESP32-S3's own USB, no driver needed. If it doesn't show,
+   hold **BOOT**, press and release **RST**, release **BOOT**.
 3. Open **https://espressif.github.io/esptool-js/** (Espressif's official web flasher).
 4. Baudrate **921600** → **Connect** → choose the board's COM port.
    *If it won't connect:* hold **BOOT**, press and release **RST**, release **BOOT**, try again.
-5. Flash address **0x0**, choose `windbuddy-explorer.bin`, click **Program**. About 30 seconds.
+5. Flash address **0x0** (the page suggests 0x1000: change it), choose
+   `windbuddy-explorer.bin`, click **Program once** (a double click starts two writes that
+   corrupt each other). Wait for *Hash of data verified*.
 6. Press **RST** (or unplug and replug).
+
+**Or from a terminal** (Python), with the board in flashing mode (hold BOOT, tap RST):
+
+```powershell
+py -m pip install esptool
+py -m esptool --chip esp32s3 --port COM8 --baud 460800 write_flash 0x0 firmware/dist/windbuddy-explorer.bin
+```
+
+**The COM port disappears once Wind Buddy runs.** The board's USB uses GPIO 19/20, which the
+screen also uses, so USB stops when the screen starts. That's expected: updates and logs go
+through the server from then on (section 5). To flash by USB again, hold BOOT and tap RST first.
 
 This replaces the XiaoZhi firmware that came on the board. To go back, use OceanLabz's
 web installer on the board's tutorial page.
