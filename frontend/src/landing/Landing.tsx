@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react'
 import { api } from '../api'
 import { latestDevice } from '../lib/conversation'
+import { formatG } from '../lib/carbon'
+import { modelName } from '../lib/agent'
+import { formatUkTime } from '../lib/format'
 import { useLoad, useNow, usePolling } from '../lib/hooks'
 import { BoardArt } from './BoardArt'
 import { SNAPSHOT, seriesFrom } from '../lib/wind'
@@ -21,6 +24,7 @@ export function Landing() {
       <Board />
       <Models />
       <Results />
+      <Compute />
       <Trust />
       <Closing />
       <Footer />
@@ -41,6 +45,7 @@ function Nav() {
           <a href="#run">A real run</a>
           <a href="#board">The board</a>
           <a href="#results">Results</a>
+          <a href="#compute">AI compute</a>
         </nav>
         <div className="nav-end">
           <a className="nav-quiet" href={REPO}>
@@ -283,7 +288,8 @@ function Models() {
           Calls tools over live grid data and explains the plan. 27 of 27 test nights verified, median 4 seconds.
         </Model>
         <Model role="Backup and watcher" name="Muse Spark Open">
-          Open weights on Baseten. Takes over if the main API fails, and writes the watcher's notes.
+          Open weights on Baseten. Takes over if the main API fails, and writes the watcher's notes and the
+          live grid brief.
         </Model>
         <Model role="Referee, plain code" name="Fact checker" dark>
           Every time and number must trace back to a tool result. Models propose; code verifies.
@@ -365,6 +371,65 @@ const TRUST: [string, string][] = [
   ['Fails safe', 'No server for 10 minutes means the load goes off.'],
 ]
 
+function Compute() {
+  const carbon = usePolling(() => api.carbon(1), 'carbon-now', POLL_MS * 10)
+  const brief = usePolling(api.brief, 'brief', POLL_MS * 10)
+  const regions = carbon.data?.regions ?? []
+  const max = Math.max(...regions.map((r) => r.now_g ?? 0), 1)
+  const b = brief.data
+  return (
+    <Section id="compute" label="Beyond the driveway" title="The same idea, for AI's power bill.">
+      <div className="split top">
+        <p className="section-lede">
+          A data centre can't follow the wind. The jobs inside it can. A checkpointed training run or an overnight
+          batch only has to finish by its deadline, so Wind Buddy picks the region and the half-hours where Britain's
+          grid is cleanest, from NESO's forecast for 14 regions, and compares it with starting now in London.
+        </p>
+        <div className="compute-actions">
+          <a className="btn primary" href={`${APP}?view=grid`}>
+            Plan a compute job <Arrow />
+          </a>
+          <p className="muted">Or ask the board: “I need 32 GPU-hours before 7 am. Where and when?”</p>
+        </div>
+      </div>
+      <div className="compute-live">
+        <div className="card brief-card">
+          <p className="model-role">Live grid brief</p>
+          <p className="brief-quote">{b ? b.text : 'Reading the grid…'}</p>
+          {b && (
+            <p className="muted brief-by">
+              {b.by === 'code'
+                ? `Written by code at ${formatUkTime(b.at)} UK time.`
+                : `Written by ${modelName(b.by)} at ${formatUkTime(b.at)} UK time; ${b.check}.`}
+            </p>
+          )}
+        </div>
+        <div className="card regions-card">
+          <h3>Grams of CO2 per kWh, right now</h3>
+          {regions.length === 0 && <p className="muted">Loading NESO's forecast…</p>}
+          <ul className="region-bars">
+            {regions.map((r) => (
+              <li key={r.id}>
+                <span className="region-name">{r.name}</span>
+                <span className="bar-track">
+                  <span className="bar" style={{ width: `${((r.now_g ?? 0) / max) * 100}%` }} />
+                </span>
+                <span className="region-value">{r.now_g === null ? 'n/a' : Math.round(r.now_g)}</span>
+              </li>
+            ))}
+          </ul>
+          {carbon.data && (
+            <p className="footnote">
+              NESO Carbon Intensity API, forecast for {formatUkTime(carbon.data.times[0])} UK time. Great Britain as a
+              whole: {formatG(carbon.data.gb_now_g)}.
+            </p>
+          )}
+        </div>
+      </div>
+    </Section>
+  )
+}
+
 function Trust() {
   return (
     <Section id="trust" label="Trust" title="It never acts alone.">
@@ -412,7 +477,8 @@ function Footer() {
     <footer className="wrap site-footer">
       <span className="footer-name">Wind Buddy</span>
       <span className="footer-text">
-        Built for the Meta Global AI Developer Hackathon 2026. Grid data: Elexon BMRS (FUELHH, WINDFOR).
+        Built for the Meta Global AI Developer Hackathon 2026. Grid data: Elexon BMRS (FUELHH, WINDFOR) and
+        the NESO Carbon Intensity API.
       </span>
       <nav aria-label="Links">
         <a href={APP}>Console</a>
