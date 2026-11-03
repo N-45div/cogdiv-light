@@ -123,16 +123,16 @@ void dropLogs(int sent) {  // the server has these now
 void setRelay(bool on) {
   relayState = on;
   digitalWrite(PIN_RELAY, (on == (RELAY_ACTIVE_HIGH == 1)) ? HIGH : LOW);
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-  rgbLedWrite(PIN_RGB_LED, 0, on ? 40 : 0, 0);  // dim green while the load is on
-#else
-  neopixelWrite(PIN_RGB_LED, 0, on ? 40 : 0, 0);
+#if PIN_RGB_LED >= 0
+  neopixelWrite(PIN_RGB_LED, 0, on ? 40 : 0, 0);  // dim green while the load is on
 #endif
 }
 
 // ---- screen ----------------------------------------------------------------------------------
 
 static const uint16_t COLOR_TEAL = 0x0410, COLOR_DARKGREEN = 0x03E0, COLOR_GREY = 0x7BEF;
+
+bool screenOwnedByTest = false;  // the screen test (SCREEN_TEST builds) is drawing
 
 uint16_t modeColor(const String &mode) {
   if (mode == "proposal") return ST77XX_ORANGE;
@@ -146,6 +146,7 @@ uint16_t modeColor(const String &mode) {
 }
 
 void drawHeader() {
+  if (screenOwnedByTest) return;
   tft.fillRect(0, 0, tft.width(), 18, modeColor(view.mode));
   tft.setTextSize(1);
   tft.setTextColor(ST77XX_WHITE);
@@ -158,6 +159,7 @@ void drawHeader() {
 }
 
 void drawAll() {
+  if (screenOwnedByTest) return;
   tft.fillScreen(ST77XX_BLACK);
   drawHeader();
   tft.setTextSize(1);
@@ -332,6 +334,7 @@ String devicePath(const char *what) {
 }
 
 void maybeUpdate(JsonDocument &doc);
+void maybeSpeak(JsonDocument &doc);
 void confirmFirmware();
 bool onTrial = false;  // running new over-the-air firmware that hasn't reached the server yet
 
@@ -343,6 +346,7 @@ void poll() {
     failedPolls = 0;
     if (onTrial) confirmFirmware();
     apply(doc);
+    maybeSpeak(doc);
     maybeUpdate(doc);
     return;
   }
@@ -372,6 +376,7 @@ void sendEvent(const char *type, const String &proposalId = "") {
     dropLogs(sent);
     lastOkMs = millis();
     apply(doc);
+    maybeSpeak(doc);
   } else {
     logLine("%s not accepted (HTTP %d)", type, lastHttp);
   }
@@ -516,6 +521,8 @@ bool verifyRollbackLater() { return true; }
 
 // ---- button ----------------------------------------------------------------------------------
 
+#include "audio.h"
+
 uint32_t pressedAt = 0;
 bool pressed = false, holdFired = false;
 
@@ -541,19 +548,28 @@ void onHold() {
   }
 }
 
+bool canTalk() { return view.mode == "idle" || view.mode == "done"; }
+
 void readButton() {
   bool down = digitalRead(PIN_BUTTON) == LOW;
   uint32_t now = millis();
   if (down && !pressed) {
     pressed = true;
     holdFired = false;
+    talkedThisPress = false;
     pressedAt = now;
   } else if (down && pressed) {
+    // In idle, holding the button is push-to-talk; otherwise hold = yes / stop.
+    if (!holdFired && canTalk() && now - pressedAt >= TALK_AFTER_MS) {
+      holdFired = true;
+      startTalking();
+    }
     if (!holdFired && now - pressedAt >= HOLD_MS) {
       holdFired = true;
       onHold();
     }
-    if (now - pressedAt >= RESET_HOLD_MS) {
+    if (talking && now - talkStartMs >= MAX_TALK_MS) finishTalking();
+    if (!talkedThisPress && now - pressedAt >= RESET_HOLD_MS) {
       showMessage("setup", "Reset Wi-Fi", {"Opening setup..."});
       WiFiManager wm;
       wm.resetSettings();
@@ -563,7 +579,11 @@ void readButton() {
     }
   } else if (!down && pressed) {
     pressed = false;
-    if (!holdFired && now - pressedAt <= TAP_MAX_MS) onTap();
+    if (talking) {
+      finishTalking();
+    } else if (!holdFired && now - pressedAt <= TAP_MAX_MS) {
+      onTap();
+    }
   }
 }
 
@@ -583,8 +603,15 @@ const char *resetReason() {
   }
 }
 
+#ifdef SCREEN_TEST
+#include "screen_test.h"
+#endif
+
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);  // USB serial: UART0's pins (43/44) drive the screen
+#if ARDUINO_USB_CDC_ON_BOOT
+  Serial.setTxTimeoutMs(0);  // never wait for a USB host that isn't reading
+#endif
   logLine("Wind Buddy %s, %s, running %s", FW_VERSION, resetReason(),
           esp_ota_get_running_partition()->label);
   pinMode(PIN_BUTTON, INPUT_PULLUP);
@@ -601,6 +628,8 @@ void setup() {
   prefs.end();
   if (onTrial) {
     logLine("new firmware on trial: must reach the server within 3 min");
+  } else if (triedMd5.length() && triedVersion == FW_VERSION) {
+    confirmFirmware();  // the bootloader doesn't keep updates on trial: this one booted fine
   } else if (triedMd5.length()) {
     logLine("update %s was rolled back: staying on %s", triedVersion.c_str(), FW_VERSION);
   }
@@ -609,19 +638,31 @@ void setup() {
   tft.setRotation(settings.rotation);
   showMessage("boot", "Wind Buddy", {String("firmware ") + FW_VERSION, "Connecting Wi-Fi..."});
 
+  setupAudio();
   connectWifi(false);
   logLine("Wi-Fi %s, %d dBm, ip %s", WiFi.SSID().c_str(), WiFi.RSSI(),
           WiFi.localIP().toString().c_str());
+  chime();
   showMessage("boot", "Wind Buddy", {"Wi-Fi connected", WiFi.localIP().toString(),
                                      settings.server.isEmpty() ? "No server URL set!"
                                                                : "Asking the server..."});
   lastOkMs = millis();
+#ifdef SCREEN_TEST
+  startScreenTest();
+#endif
 }
 
 bool wifiWasDown = false;
 
 void loop() {
   readButton();
+  if (talking) {  // nothing else while recording: keep the microphone fed
+    readMic();
+    return;
+  }
+#ifdef SCREEN_TEST
+  screenOwnedByTest = screenTestTick();
+#endif
   uint32_t now = millis();
   if (onTrial && now > TRIAL_MS) giveUpTrial();
   if (WiFi.status() != WL_CONNECTED) {
