@@ -27,3 +27,6 @@ frontend/dist/
 
 # Board settings with Wi-Fi password and device token (firmware/provision.py)
 firmware/device.local.ini
+
+# Internal notes (plans, decisions, deployment runbooks): kept locally, not published
+docs/

@@ -4,7 +4,7 @@ name: Deploy
 # then checks the live URL answers. Needs the repository secrets MODAL_TOKEN_ID and
 # MODAL_TOKEN_SECRET; until they are set, it skips. The app's own keys (MODEL_API_KEY,
 # BASETEN_API_KEY, FIREWORKS_API_KEY, DEVICE_TOKENS, APP_TOKEN) are copied from repository
-# secrets into the Modal secret "wind-buddy" on every deploy. See docs/DEPLOYMENT.md.
+# secrets into the Modal secret "wind-buddy" on every deploy.
 
 on:
   workflow_run:
@@ -36,7 +36,7 @@ jobs:
           if [ -n "$MODAL_TOKEN_ID" ] && [ -n "$MODAL_TOKEN_SECRET" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::Deploy skipped: add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET as repository secrets (docs/DEPLOYMENT.md)."
+            echo "::notice::Deploy skipped: add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET as repository secrets."
           fi
 
   deploy:

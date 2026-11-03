@@ -8,7 +8,7 @@
   can use a tighter range.
 - The forecast is SCALED, not shifted: metered wind comes in at a fairly steady share of the
   forecast (about 75-87% in Oct 2026), so the gap grows with the wind. A fixed offset learned
-  on windy days over-corrects calm ones (docs/DECISIONS.md, C6).
+  on windy days over-corrects calm ones.
 
 The same functions serve live mode (T = now), the replay demo and the backtest.
 """

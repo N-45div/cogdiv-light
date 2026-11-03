@@ -1,4 +1,4 @@
-"""Compare ways of correcting the wind forecast on days it has not seen (docs/DECISIONS.md, C6).
+"""Compare ways of correcting the wind forecast on days it has not seen.
 
 Usage:
     python backend/scripts/compare_corrections.py           # January 2026 snapshot

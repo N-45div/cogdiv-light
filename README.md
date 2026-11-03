@@ -13,10 +13,10 @@ switches the load.
   Everything Wind Buddy (agent, fact checker, board firmware, voice, watcher, carbon and compute
   planning) was built during the hackathon. It sits on an earlier January 2026 wind-forecast
   monitor (below), which supplies the forecast-correction method.
-- **Design and results:** [docs/DECISIONS.md](docs/DECISIONS.md) part C.
-- **Plan:** [docs/HACKATHON_PLAN.md](docs/HACKATHON_PLAN.md).
+- **How it works:** [ARCHITECTURE.md](ARCHITECTURE.md), with diagrams and statecharts from
+  the spoken question to the switched relay.
 
-![Agent & device tab](docs/screenshots/agent-view.png)
+![Agent & device tab](assets/screenshots/agent-view.png)
 
 ### What it does
 
@@ -83,7 +83,7 @@ Data: Elexon BMRS [FUELHH](https://bmrs.elexon.co.uk/api-documentation/endpoint/
 **Live app:** the *Day-ahead* and *Accuracy* tabs of the
 [console](https://ndivij2004--wind-buddy-web.us-east.modal.run/app/?view=day).
 
-![Day-ahead view](docs/screenshots/day-ahead-view.png)
+![Day-ahead view](assets/screenshots/day-ahead-view.png)
 
 ### What January 2026 shows
 
@@ -94,13 +94,10 @@ Data: Elexon BMRS [FUELHH](https://bmrs.elexon.co.uk/api-documentation/endpoint/
 - Correcting for that typical offset cut the average error to **1,391 MW (−31%)**. The app shows this bias-adjusted expectation alongside the raw forecast.
 - Forecasts made under 6 hours ahead are **17% more accurate** than day-ahead ones: the value of intraday re-trading.
 
-Full method and caveats: [docs/DECISIONS.md](docs/DECISIONS.md) (A8, A10, A12).
+![Forecast accuracy view](assets/screenshots/accuracy-view.png)
 
-![Forecast accuracy view](docs/screenshots/accuracy-view.png)
-
-**Design decisions:** [docs/DECISIONS.md](docs/DECISIONS.md) explains every choice (analysis and engineering) and the trade-offs.
-
-**Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has diagrams of the system, data pipeline, request flow and CI/CD, plus a table of every edge case and the test that covers it.
+**Architecture:** [ARCHITECTURE.md](ARCHITECTURE.md) has diagrams of the system, the data
+pipelines, the agent, the board and deployment.
 
 ---
 
@@ -166,7 +163,6 @@ python scripts/backtest.py [--live]          # charging strategies vs actual win
 MODEL_API_KEY=... python scripts/agent_eval.py   # the real agent on 27 January nights
 ```
 
-Results are in [docs/DECISIONS.md](docs/DECISIONS.md) (C9).
 
 ### The agent
 
@@ -255,10 +251,8 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 ├── .github/workflows/
 │   ├── ci.yml                   Lint, type-check, test, build, Docker smoke test
 │   └── refresh-data.yml         Manual job that re-downloads the Elexon data snapshot
-├── docs/
-│   ├── ARCHITECTURE.md          Diagrams (Mermaid), caching, error handling, edge cases
-│   ├── DECISIONS.md             Design decisions, data findings and trade-offs
-│   └── screenshots/             Screenshots of the two views (real January 2026 data)
+├── assets/screenshots/         Screenshots used in this README
+├── ARCHITECTURE.md             Diagrams and statecharts, end to end
 ├── requirements.txt             Points Vercel at backend/requirements.txt
 └── .python-version              Python 3.12 for Vercel, CI and local tools
 ```
@@ -291,20 +285,13 @@ Interactive documentation: `/api/docs`.
 
 **The full app (agent, devices, website): Modal.** One always-on container
 (`deploy/modal_app.py`), deployed with `modal deploy deploy/modal_app.py` from a laptop (or,
-optionally, by `.github/workflows/deploy.yml` after CI). Set-up and day-to-day commands:
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+optionally, by `.github/workflows/deploy.yml` after CI, once the Modal token and the app's
+keys are repository secrets). The app's keys live in the Modal secret `wind-buddy`.
 
 **The read-only January views only: Vercel.** Import the repository at https://vercel.com/new
 and keep the defaults (`vercel.json` builds `frontend/` and runs FastAPI as a serverless
 function). Serverless copies don't share memory, so the agent's run log and the devices need
 the Modal deployment.
 
-The device side (flashing the ESP32 from a laptop) is described for a Claude Code session on
-that laptop in [docs/LAPTOP_SESSION.md](docs/LAPTOP_SESSION.md).
-
-## Use of AI tools
-
-This project was built with the help of **Claude Code** (Anthropic) as an AI pair programmer. It
-was used to research the domain (Elexon datasets, GB day-ahead auction times), scaffold the
-project, write code, tests and documentation, and review the design. The design decisions and
-trade-offs are written up in [docs/DECISIONS.md](docs/DECISIONS.md).
+The board: flash it once from the browser, then updates go over the air (see
+[firmware/README.md](firmware/README.md)).

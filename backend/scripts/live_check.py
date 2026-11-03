@@ -5,7 +5,7 @@ Usage (API already running with CLOCK_MODE=live):
 
 Checks the clock is live, the outlook has fresh forecasts and actuals, and a plan comes back.
 Also measures how soon Elexon publishes each half-hour of actual wind, to test the 30-minute
-assumption in docs/DECISIONS.md (C1). (Elexon's publishTime is just the end of the half-hour,
+assumption the planning clock makes. (Elexon's publishTime is just the end of the half-hour,
 so the delay is measured from the newest half-hour available right now instead.)
 Prints Markdown (for the GitHub job summary) and exits non-zero if any check fails.
 """

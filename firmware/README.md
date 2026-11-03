@@ -71,8 +71,8 @@ To change any of this later: hold **BOOT** for 10 seconds.
 
 **Deployed (normal):** use the URL that `modal deploy deploy/modal_app.py` printed, e.g.
 `https://<workspace>--wind-buddy-web.modal.run`, and the device token for `desk-1` from the
-`DEVICE_TOKENS` you set in the `wind-buddy` Modal secret. Commands for the deployed app, including the
-replay demo, are in [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
+`DEVICE_TOKENS` you set in the `wind-buddy` Modal secret. How the board and the server work
+together is in [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 **Without the deployment**, run the API on the laptop and use the laptop's address:
 

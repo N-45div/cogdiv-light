@@ -54,7 +54,7 @@ CLOCK_MODES = ("replay", "live")
 REPLAY_FIRST = datetime.combine(DECISION_FIRST, time(0), UK_TZ)
 REPLAY_LAST = datetime.combine(DELIVERY_LAST + timedelta(days=1), time(0), UK_TZ)
 # Default replay moment: 09:00 on 14 Jan, just before the cut-off for 15 Jan delivery
-# (the worked example in docs/DECISIONS.md, A3).
+# (a worked example).
 DEFAULT_REPLAY_START = datetime(2026, 1, 14, 9, 0, tzinfo=UK_TZ)
 
 # How many days of past forecast errors feed the uncertainty band when planning.

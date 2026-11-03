@@ -312,7 +312,7 @@ function Model(props: { role: string; name: string; children: ReactNode; dark?: 
   )
 }
 
-// Backtest, October 2026 on live data, 25 nights (docs/DECISIONS.md C9): wind output while
+// Backtest, October 2026 on live data, 25 nights (backend/wind_monitor/backtest.py): wind output while
 // charging, as a gain over charging the moment the car is plugged in.
 const BARS = [
   { label: 'Charge at plug-in', gain: 0 },
@@ -342,7 +342,7 @@ function Results() {
           </ul>
           <p className="footnote">
             Each night a car plugs in at 18:00 needing 21 kWh at 7 kW by 07:00. Score: GB wind output while it
-            charged. Method in <a href={`${REPO}/blob/main/docs/DECISIONS.md`}>docs/DECISIONS.md</a>, C9.
+            charged. Method in <a href={`${REPO}/blob/main/backend/wind_monitor/backtest.py`}>backtest.py</a>.
           </p>
         </div>
         <div className="result-figures">
