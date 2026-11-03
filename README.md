@@ -1,15 +1,68 @@
-# Wind Forecast Monitor + Wind Buddy
+# Wind Buddy
 
-**Hackathon build (Meta Global AI Developer Hackathon, from 27 Oct 2026):** an agent on Meta's
-**Muse Spark** plans flexible demand (an EV charge) into the windiest hours, using a forecast
-corrected for its measured track record. Every figure in its answers is **fact-checked** against
-its tools' results before a plan can reach an **ESP32 device**, where a person approves it with
-a button and the device switches the load. A **watcher** (Muse Spark Open) re-checks approved
-plans as forecasts update. Live app: https://ndivij2004--wind-buddy-web.us-east.modal.run
-(details: [docs/HACKATHON_PLAN.md](docs/HACKATHON_PLAN.md), design and results:
-[docs/DECISIONS.md](docs/DECISIONS.md) part C).
+**Flexible electricity use that follows the wind: an EV charge at home, or an AI training run in a
+data centre.** Ask the board (an ESP32 with a mic, a speaker, one button and a relay), or the web
+console. An agent on Meta's **Muse Spark** plans the load into the windiest, cleanest hours, and the
+places too for compute. Code fact-checks every figure in its answer against its tools' results.
+Only then does the plan reach the board, where a person approves it with the button and the relay
+switches the load.
+
+- **Live site:** https://ndivij2004--wind-buddy-web.us-east.modal.run (console at
+  [/app/](https://ndivij2004--wind-buddy-web.us-east.modal.run/app/))
+- **Built for** the Meta Global AI Developer Hackathon 2026 (Indie track), from 27 Oct 2026.
+  Everything Wind Buddy (agent, fact checker, board firmware, voice, watcher, carbon and compute
+  planning) was built during the hackathon. It sits on an earlier January 2026 wind-forecast
+  monitor (below), which supplies the forecast-correction method.
+- **Design and results:** [docs/DECISIONS.md](docs/DECISIONS.md) part C.
+- **Plan:** [docs/HACKATHON_PLAN.md](docs/HACKATHON_PLAN.md).
 
 ![Agent & device tab](docs/screenshots/agent-view.png)
+
+### What it does
+
+1. **Home: charge in the windiest hours.**
+   - "My EV needs 21 kWh by 7 am." The agent plans the charge into the windiest half-hours.
+   - Plans use the official GB wind forecast, corrected for its measured track record (it ran
+     high in 85% of hours in January).
+   - Each plan states the grid's carbon intensity while charging. Ask for "lowest carbon" and the
+     agent plans for that instead.
+   - Backtest on live October data: **+12.1% more wind** than charging at plug-in, which is 88%
+     of what perfect hindsight would get.
+2. **Data centres: run compute where and when the grid is cleanest.**
+   - "64 GPUs for 6 hours, done within a day."
+   - The agent compares NESO's carbon forecast for all 14 GB regions, half-hour by half-hour.
+   - It picks the cleanest region and hours, and says how much less CO2 that is than starting
+     now in London. It splits the saving into moving the job in time and moving it in place.
+   - On a windy night, Scotland is near 0 g/kWh while the south runs at 200 to 380.
+3. **The board: talk to it, approve with a button.**
+   - Hold BOOT and speak. **Muse Voice Transcribe** hears you, and the agent plans.
+   - The board says the plan in one short sentence and shows it on screen.
+   - Hold the button for yes. The relay then follows the plan's windows.
+   - A **watcher** re-checks approved charge plans as new forecasts land, and proposes a better
+     window if one appears.
+
+### Meta models
+
+| Model | Where | Job |
+|---|---|---|
+| **Muse Spark 1.3** | Meta Model API | The planner: calls the tools, answers, and rewrites once if the fact check fails |
+| **Muse Spark Open** (open weights) | Baseten | Backup planner, the watcher's notes, and the live grid brief on the site (fact-checked every half-hour) |
+| **Muse Voice Transcribe** | Meta Model API | Push-to-talk speech from the board |
+
+Not Meta: the board's voice is [Piper](https://github.com/rhasspy/piper) (open source text to
+speech, on our server), because Meta's API has no text to speech yet. The fact checker is plain
+code: models propose, code verifies. 27 of 27 test nights passed on both Muse Spark models.
+
+### Data
+
+- **Wind:** Elexon BMRS
+  [FUELHH](https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/FUELHH/stream) (actual
+  wind) and [WINDFOR](https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/WINDFOR/stream)
+  (forecasts), refreshed every 15 minutes.
+- **Carbon:** the [NESO Carbon Intensity API](https://carbonintensity.org.uk), a 48-hour forecast
+  for GB and its 14 regions, refreshed every half-hour.
+- Both are free and need no key.
+- Boards, plans and the agent's run log are kept on a Modal Volume, so they survive restarts.
 
 ## The original monitor
 
@@ -27,7 +80,8 @@ Data: Elexon BMRS [FUELHH](https://bmrs.elexon.co.uk/api-documentation/endpoint/
 (actual wind, half-hourly) and [WINDFOR](https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/WINDFOR/stream)
 (wind forecasts).
 
-**Live app:** _link added after deploying to Vercel (see [Deploying](#deploying-to-vercel))_
+**Live app:** the *Day-ahead* and *Accuracy* tabs of the
+[console](https://ndivij2004--wind-buddy-web.us-east.modal.run/app/?view=day).
 
 ![Day-ahead view](docs/screenshots/day-ahead-view.png)
 
@@ -121,7 +175,13 @@ Set `MODEL_API_KEY` (Meta Model API) and/or `BASETEN_API_KEY`, start the API, th
 ```bash
 curl -s localhost:8000/api/agent/ask -H 'content-type: application/json' \
   -d '{"question": "My EV needs 21 kWh at 7 kW by 07:00. When should it charge?"}'
+curl -s localhost:8000/api/agent/ask -H 'content-type: application/json' \
+  -d '{"question": "I need 64 GPUs for 6 hours, done within 24 hours. Where and when?"}'
 ```
+
+Without a model, the planners answer directly: `POST /api/plan` (a household load),
+`POST /api/compute/plan` (a compute job), `GET /api/carbon` (the regional carbon forecast) and
+`GET /api/brief` (the grid brief).
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -130,7 +190,8 @@ curl -s localhost:8000/api/agent/ask -H 'content-type: application/json' \
 | `APP_TOKEN` | unset | If set, asking the agent, moving the clock and proposing to a device need header `X-App-Token` |
 | `DEVICE_TOKENS` | unset | `id:token,...`; if set, each device must send its token in `X-Device-Token` |
 | `WATCHER_MODELS` | `modal:muse-glimmer,baseten:meta-models/muse-spark-open-1026` | Models for the watcher's notes, tried in order |
-| `WATCH` | `1` | `0` turns the background watcher off |
+| `WATCH` | `1` | `0` turns the background watcher and the grid brief off |
+| `STATE_FILE` | unset | Where to keep boards, plans and the run log across restarts |
 
 ### Refreshing the data
 
@@ -219,6 +280,10 @@ Set `DATA_SOURCE=live` to skip the snapshot and call Elexon directly.
 | `POST /api/device/{id}/event` | Button presses (approve, reject, stop) and telemetry from the device |
 | `POST /api/device/{id}/propose`, `GET /api/devices` | Send an agent plan to a device; list devices |
 | `POST /api/watch/run`, `GET /api/watch` | Run the watcher now; its recent findings (it also runs every 30 clock-minutes) |
+| `POST /api/device/{id}/voice` | Push-to-talk WAV from the board: Muse Voice Transcribe, then the agent |
+| `GET /api/carbon?hours=24` | NESO's carbon intensity forecast for GB and its 14 regions, half-hourly, cleanest region first |
+| `POST /api/compute/plan` | Where and when to run a compute job (GPUs, hours, deadline) for the least CO2, vs starting now in London |
+| `GET /api/brief` | The live grid brief: written by Muse Spark Open each half-hour and fact-checked, or by code |
 
 Interactive documentation: `/api/docs`.
 
