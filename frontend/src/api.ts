@@ -223,7 +223,8 @@ export interface DeviceSummary {
   proposal_id: string | null
   active_id: string | null
   telemetry: Record<string, unknown>
-  events: { at: string; event: string }[]
+  /** Newest first. Heard and said events carry the whole sentence in `text`. */
+  events: { at: string; event: string; text?: string }[]
   /** Firmware offered over the air and not yet running. */
   update_to?: string | null
   /** The board's own log lines (last 20, oldest first). */

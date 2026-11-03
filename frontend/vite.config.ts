@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
@@ -9,9 +10,19 @@ const apiTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:8000'
 
 export default defineConfig({
   plugins: [react()],
+  // Two pages: the landing page at / and the console (the app) at /app/.
+  build: {
+    rollupOptions: {
+      input: {
+        landing: fileURLToPath(new URL('./index.html', import.meta.url)),
+        app: fileURLToPath(new URL('./app/index.html', import.meta.url)),
+      },
+    },
+  },
   server: {
     host: true,
-    proxy: { '/api': apiTarget },
+    // changeOrigin so a hosted backend (e.g. the Modal deployment) sees its own host name.
+    proxy: { '/api': { target: apiTarget, changeOrigin: true } },
   },
   test: {
     environment: 'node',

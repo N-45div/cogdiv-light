@@ -1,0 +1,133 @@
+/* Design tokens shared by the landing page and the console (design: the "Wind Buddy
+   redesign" canvas). One light theme: cool white ground, navy ink, one signal blue.
+   Components use these roles, never raw hex. Chart colours stay distinct in lightness as
+   well as hue (blue lines vs an orange "actual" line), so they read without colour too. */
+:root {
+  color-scheme: light;
+  --page: #f5f7fa;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef2f8;
+  --text-primary: #0b1b33;
+  --text-secondary: #44526a; /* 7.9:1 on white */
+  --text-muted: #5e6b80; /* 5.4:1 on white */
+  --grid: #e6ebf2;
+  --axis: #b8c4d6;
+  --border: #dce3ec;
+  --border-strong: #c5d0de;
+
+  --brand: #1747e6; /* 6.8:1 on white */
+  --brand-strong: #0e2f9e;
+  --brand-ink: #ffffff;
+  --brand-soft: #e9effe;
+  --accent: var(--brand);
+  --accent-soft: var(--brand-soft);
+  --good: #1f7a45;
+  --good-soft: #e7f5ec;
+  --warn: #9a5200;
+  --warn-soft: #fdf0e1;
+
+  --series-forecast: #1747e6; /* a chart's main line */
+  --series-official: #9db0d0; /* the official forecast, next to our corrected one: quiet */
+  --series-expected: var(--series-forecast); /* our corrected expectation */
+  --series-actual: #e8590c;
+  --band: rgba(23, 71, 230, 0.13);
+  --run-other: #c5d0de;
+  --short: #c92a2a; /* forecast too high: desk short */
+  --long: #1747e6; /* forecast too low: desk long */
+  --window: #e9effe;
+
+  --radius: 10px;
+  --radius-large: 14px;
+  --radius-small: 8px;
+
+  --font-sans: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  font-family: var(--font-sans);
+  line-height: 1.55;
+  color: var(--text-primary);
+  background: var(--page);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--page);
+}
+
+h1,
+h2,
+h3,
+p,
+figure,
+blockquote,
+dl,
+dd {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--brand);
+}
+
+a:hover {
+  color: var(--brand-strong);
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* The brand mark (three gusts) and name. */
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text-primary);
+  font-weight: 700;
+  font-size: 1.08rem;
+  font-stretch: 112%;
+  letter-spacing: -0.01em;
+}
+
+.logo:hover {
+  color: var(--text-primary);
+}
+
+.logo img {
+  width: 30px;
+  height: 30px;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--good);
+  flex: none;
+}
+
+.dot.off {
+  background: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
