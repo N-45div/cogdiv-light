@@ -439,6 +439,7 @@ class VoiceReply(BaseModel):
     answer: str | None = Field(None, description="The agent's fact-checked answer")
     verified: bool = False
     proposed: bool = Field(False, description="A plan was sent to the device to approve")
+    stopped: bool = Field(False, description="Heard a stop command")
     run_id: str | None = None
 
 

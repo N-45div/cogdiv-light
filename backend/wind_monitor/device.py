@@ -199,7 +199,7 @@ def screen(
                 "charging",
                 "CHARGING",
                 [f"until {_hhmm(current[1])}", expected, wind_now, *alert],
-                "hold:stop",
+                "hold:talk",
             )
         upcoming = [(s, e) for s, e in windows if s > now]
         if upcoming:
@@ -208,7 +208,7 @@ def screen(
                 "waiting",
                 "Waiting for wind",
                 [f"Next {_hhmm(s)}-{_hhmm(e)}", expected, wind_now, *alert],
-                "hold:stop",
+                "hold:talk",
             )
         kwh = sum(w["energy_kwh"] for w in state.active.schedule)
         return _view("done", "Charge done", [f"{kwh:g} kWh", expected, wind_now], None)

@@ -1,6 +1,7 @@
 """The device's voice: push-to-talk in, spoken plan and announcements out."""
 
 import io
+import math
 import wave
 from dataclasses import replace
 
@@ -17,7 +18,17 @@ from wind_monitor.config import Settings
 from wind_monitor.device import DeviceRegistry, get_registry
 from wind_monitor.firmware import get_firmware
 from wind_monitor.main import create_app
-from wind_monitor.voice import Voice, get_voice, spoken, wav_info
+from wind_monitor.voice import (
+    ADPCM_MAGIC,
+    Voice,
+    adpcm_decode,
+    adpcm_encode,
+    compact,
+    get_voice,
+    pcm16,
+    spoken,
+    wav_info,
+)
 
 QUESTION = "I need 14 kWh at 7 kW, when should I charge?"
 
@@ -168,6 +179,60 @@ def test_unclear_speech_gets_a_spoken_retry(world):
 def test_bad_audio_is_rejected(world, audio, status):
     client = world[0]
     assert client.post("/api/device/desk-1/voice", content=audio).status_code == status
+
+
+def test_device_audio_is_compact_and_decodes_back():
+    rate = 22050
+    t = [i / rate for i in range(rate)]  # one second of a 440 Hz tone
+    tone = [int(8000 * math.sin(2 * math.pi * 440 * x)) for x in t]
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(b"".join(v.to_bytes(2, "little", signed=True) for v in tone))
+    data = compact(buffer.getvalue())
+    assert data[:4] == ADPCM_MAGIC
+    assert int.from_bytes(data[4:8], "little") == 16000
+    count = int.from_bytes(data[8:12], "little")
+    assert count == 16000 and len(data) == 12 + 8000  # 4 bits a sample: 8 KB per second
+    original = pcm16(buffer.getvalue()).tolist()
+    decoded = adpcm_decode(data[12:], count)
+    error = sum((a - b) ** 2 for a, b in zip(original, decoded, strict=True)) / count
+    power = sum(a * a for a in original) / count
+    assert power / error > 30  # better than 15 dB: clear enough for speech
+
+
+def test_adpcm_round_trip_follows_the_signal():
+    samples = [0, 1000, 4000, 9000, 4000, -3000, -12000, -2000, 0, 500] * 50
+    decoded = adpcm_decode(adpcm_encode(samples), len(samples))
+    tail = range(len(samples) // 2, len(samples))
+    assert sum(abs(decoded[i] - samples[i]) for i in tail) / len(tail) < 2500
+    assert max(decoded) > 6000 and min(decoded) < -8000
+
+
+def test_the_device_downloads_compact_speech(world):
+    client = world[0]
+    client.post("/api/agent/ask", json={"question": QUESTION, "device_id": "desk-1"})
+    say_ = client.get("/api/device/desk-1/state").json()["say"]
+    small = client.get(say_["path"] + "?format=adpcm")
+    assert small.status_code == 200 and small.content[:4] == ADPCM_MAGIC
+    assert len(small.content) < len(client.get(say_["path"]).content) / 3
+
+
+def test_stop_charging_by_voice(world):
+    client, clock, voice, synth = world
+    run = client.post("/api/agent/ask", json={"question": QUESTION, "device_id": "desk-1"}).json()
+    client.post("/api/device/desk-1/event", json={"type": "approve", "proposal_id": run["id"]})
+    voice.transcriber.transcript = "Stop charging please."
+    reply = client.post("/api/device/desk-1/voice", content=make_wav()).json()
+    assert reply["stopped"] is True
+    state = client.get("/api/device/desk-1/state").json()
+    assert state["mode"] == "idle" and synth.spoken[-1] == "Okay, I've stopped charging."
+    # Nothing left to stop: it says so.
+    client.post("/api/device/desk-1/voice", content=make_wav())
+    client.get("/api/device/desk-1/state")
+    assert synth.spoken[-1].startswith("Nothing is charging right now")
 
 
 def test_speech_needs_the_device_token(world, monkeypatch):

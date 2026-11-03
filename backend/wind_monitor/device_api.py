@@ -17,6 +17,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import re
 from typing import Annotated
 
 import pandas as pd
@@ -62,6 +63,7 @@ FirmwareDep = Annotated[FirmwareImage | None, Depends(get_firmware)]
 VoiceDep = Annotated[Voice, Depends(get_voice)]
 SUMMARY_LOG_LINES = 20
 MAX_VOICE_SECONDS = 15
+STOP_WORDS = re.compile(r"^\W*(please\W+)?(stop|cancel|halt|pause)\b", re.IGNORECASE)
 log = logging.getLogger(__name__)
 
 
@@ -206,6 +208,16 @@ async def device_voice(
             device_id, "Sorry, I didn't quite catch that. Hold the button and try again."
         )
         return reply
+    if STOP_WORDS.search(transcript) and len(transcript.split()) <= 6:
+        # "Stop charging" is a command, not a question for the planner.
+        if any(s.device_id == device_id and s.active for s in registry.all()):
+            registry.event(device_id, {"type": "stop"}, now)
+        else:
+            registry.queue_say(
+                device_id, "Nothing is charging right now, so there's nothing to stop."
+            )
+        reply["stopped"] = True
+        return reply
     if not planner.available():
         registry.queue_say(device_id, "Sorry, no planning model is set up on the server.")
         return reply
@@ -221,11 +233,16 @@ async def device_voice(
 
 
 @router.get("/device/{device_id}/speech/{clip_id}")
-def device_speech(device_id: AuthorisedDevice, clip_id: int, voice: VoiceDep) -> Response:
-    """A speech clip for the device to play (WAV)."""
+def device_speech(
+    device_id: AuthorisedDevice, clip_id: int, voice: VoiceDep, format: str = "wav"
+) -> Response:
+    """A speech clip for the device to play: WAV, or with ?format=adpcm the compact stream the
+    board plays as it downloads (16 kHz IMA ADPCM, about 8 KB per second of speech)."""
     clip = voice.clip(clip_id)
     if clip is None:
         raise HTTPException(404, "No such clip (the server keeps the newest few)")
+    if format == "adpcm":
+        return Response(voice.device_audio(clip_id), media_type="application/octet-stream")
     return Response(clip.wav, media_type="audio/wav")
 
 

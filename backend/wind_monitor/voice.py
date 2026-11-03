@@ -24,10 +24,15 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import httpx
+import numpy as np
 
 ASR_URL = "https://api.meta.ai/v1/asr/transcribe"
 ASR_MODEL = "muse-voice-transcribe-1.0"
 MAX_CLIPS = 20
+# What the device downloads: 16 kHz IMA ADPCM, 8 KB per second of speech (a 22 kHz WAV is 44 KB/s,
+# too slow over a long-distance link: the board plays it as it downloads).
+DEVICE_RATE = 16000
+ADPCM_MAGIC = b"WBA1"
 # Plan-related words the transcriber should expect (vocabulary biasing).
 KEYWORDS = ["wind", "charge", "charging", "kilowatt hours", "kWh", "EV", "car", "heat pump"]
 
@@ -151,11 +156,99 @@ def spoken(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# fmt: off
+_STEPS = [
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
+    73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408,
+    449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
+    2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630,
+    9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794,
+    32767,
+]
+# fmt: on
+_INDEX = [-1, -1, -1, -1, 2, 4, 6, 8] * 2
+
+
+def pcm16(wav_bytes: bytes, rate: int = DEVICE_RATE) -> np.ndarray:
+    """A mono 16-bit WAV as int16 samples at `rate` (linear resampling: fine for speech)."""
+    with wave.open(io.BytesIO(wav_bytes)) as wav:
+        source_rate, channels = wav.getframerate(), wav.getnchannels()
+        samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2")
+    if channels > 1:
+        samples = samples.reshape(-1, channels).mean(axis=1)
+    if source_rate != rate and len(samples):
+        n = int(len(samples) * rate / source_rate)
+        samples = np.interp(np.arange(n) * source_rate / rate, np.arange(len(samples)), samples)
+    return np.clip(np.round(samples), -32768, 32767).astype(np.int16)
+
+
+def adpcm_encode(samples) -> bytes:
+    """IMA ADPCM, one continuous stream from predictor 0 / index 0, low nibble first."""
+    predictor, index, out, low = 0, 0, bytearray(), None
+    for sample in samples.tolist() if hasattr(samples, "tolist") else samples:
+        step = _STEPS[index]
+        diff = sample - predictor
+        code = 8 if diff < 0 else 0
+        diff = abs(diff)
+        delta = step >> 3
+        if diff >= step:
+            code |= 4
+            diff -= step
+            delta += step
+        if diff >= step >> 1:
+            code |= 2
+            diff -= step >> 1
+            delta += step >> 1
+        if diff >= step >> 2:
+            code |= 1
+            delta += step >> 2
+        predictor = max(-32768, min(32767, predictor - delta if code & 8 else predictor + delta))
+        index = max(0, min(88, index + _INDEX[code]))
+        if low is None:
+            low = code
+        else:
+            out.append(low | (code << 4))
+            low = None
+    if low is not None:
+        out.append(low)
+    return bytes(out)
+
+
+def adpcm_decode(data: bytes, count: int) -> list[int]:
+    """The device's decoder, in Python (for tests)."""
+    predictor, index, out = 0, 0, []
+    for byte in data:
+        for code in (byte & 15, byte >> 4):
+            if len(out) == count:
+                return out
+            step = _STEPS[index]
+            delta = step >> 3
+            if code & 4:
+                delta += step
+            if code & 2:
+                delta += step >> 1
+            if code & 1:
+                delta += step >> 2
+            predictor = predictor - delta if code & 8 else predictor + delta
+            predictor = max(-32768, min(32767, predictor))
+            index = max(0, min(88, index + _INDEX[code]))
+            out.append(predictor)
+    return out
+
+
+def compact(wav_bytes: bytes) -> bytes:
+    """Header "WBA1", sample rate and sample count (little-endian u32), then IMA ADPCM."""
+    samples = pcm16(wav_bytes)
+    header = ADPCM_MAGIC + DEVICE_RATE.to_bytes(4, "little") + len(samples).to_bytes(4, "little")
+    return header + adpcm_encode(samples)
+
+
 @dataclass
 class Clip:
     id: int
     text: str
     wav: bytes
+    device_audio: bytes | None = None  # compact(wav), made once on first download
 
 
 class Voice:
@@ -184,6 +277,14 @@ class Voice:
     def clip(self, clip_id: int) -> Clip | None:
         with self._lock:
             return self._clips.get(clip_id)
+
+    def device_audio(self, clip_id: int) -> bytes | None:
+        clip = self.clip(clip_id)
+        if clip is None:
+            return None
+        if clip.device_audio is None:
+            clip.device_audio = compact(clip.wav)
+        return clip.device_audio
 
 
 @lru_cache(maxsize=1)
