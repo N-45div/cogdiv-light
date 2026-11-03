@@ -137,7 +137,7 @@ void tone(int freq, int ms) {
     playMono(buf, n);
     done += n;
   }
-  finishSound();
+  delay(ms + 30);  // the beep went into idle buffers: it plays now
 }
 
 void chime() {  // ready

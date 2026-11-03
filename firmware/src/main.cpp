@@ -581,7 +581,9 @@ void readButton() {
       holdFired = true;
       onHold();
     }
-    if (talking && now - talkStartMs >= MAX_TALK_MS) finishTalking();
+    // millis(), not `now`: `now` was read before the beep, so it can be older than
+    // talkStartMs, and the unsigned difference would wrap to a huge number.
+    if (talking && millis() - talkStartMs >= MAX_TALK_MS) finishTalking();
     if (!talkedThisPress && now - pressedAt >= RESET_HOLD_MS) {
       showMessage("setup", "Reset Wi-Fi", {"Opening setup..."});
       WiFiManager wm;
