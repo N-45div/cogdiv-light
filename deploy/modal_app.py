@@ -17,14 +17,29 @@ BACKEND = ROOT / "backend"
 SITE = ROOT / "frontend" / "dist"  # built by `npm run build`; optional
 FIRMWARE = ROOT / "firmware" / "dist"  # committed; offered to boards over the air
 
+# The device's speaking voice: Piper (open source text-to-speech; Meta's API has none), with a
+# British voice from rhasspy/piper-voices. Speech-to-text is Meta's Muse Voice Transcribe.
+PIPER_VOICE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium"
+VOICE = "en_GB-alan-medium.onnx"
+
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install_from_requirements(str(BACKEND / "requirements.txt"))
+    .pip_install("piper-tts==1.3.0")
+    .run_commands(
+        "mkdir -p /app/voices",
+        *(
+            f"python -c \"import urllib.request as u; "
+            f"u.urlretrieve('{PIPER_VOICE_URL}/{name}', '/app/voices/{name}')\""
+            for name in (VOICE, f"{VOICE}.json")
+        ),
+    )
     .env(
         {
             "SNAPSHOT_DIR": "/app/data",
             "STATIC_DIR": "/app/static",
             "FIRMWARE_DIR": "/app/firmware",
+            "PIPER_VOICE": f"/app/voices/{VOICE}",
             "PYTHONPATH": "/app",
         }
     )
