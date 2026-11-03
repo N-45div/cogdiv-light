@@ -72,7 +72,8 @@ jobs:
         run: |
           docker run -d --name app -p 8000:8000 wind-monitor
           for i in $(seq 1 30); do curl -sf localhost:8000/api/health && break; sleep 1; done
-          curl -sf localhost:8000/ | grep -q "Wind Forecast Monitor"
+          curl -sf localhost:8000/ | grep -q "<title>Wind Buddy</title>"
+          curl -sfL localhost:8000/app | grep -q "<title>Wind Buddy console</title>"
           curl -sf "localhost:8000/api/accuracy?cutoff=09:20" > /dev/null
       - if: failure()
         run: docker logs app
