@@ -1,0 +1,46 @@
+name: Uptime
+
+# Checks the live app every 15 minutes: the site, the console, live wind and carbon data, and
+# the grid brief. A failed run emails the repository owner, so an outage is noticed within
+# minutes. GitHub may start scheduled runs a few minutes late.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Live app answers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      URL: https://ndivij2004--wind-buddy-web.us-east.modal.run
+    steps:
+      - name: Check each part
+        run: |
+          failed=0
+          check() {
+            # Three tries, 20 s apart, so a single slow answer isn't an outage.
+            for attempt in 1 2 3; do
+              code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 60 "$URL$1")
+              if [ "$code" = "200" ] && grep -q "$2" /tmp/body; then
+                echo "ok   $1"
+                return 0
+              fi
+              sleep 20
+            done
+            echo "::error::$1 answered $code"
+            failed=1
+          }
+          check /                    "<title>Wind Buddy</title>"
+          check /app/                "<title>Wind Buddy console</title>"
+          check /api/health          '"ok"'
+          check /api/clock           '"mode"'
+          check "/api/outlook?hours=6" '"points"'
+          check "/api/carbon?hours=1"  '"regions"'
+          check /api/brief           '"text"'
+          exit $failed

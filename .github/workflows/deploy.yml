@@ -80,8 +80,14 @@ jobs:
           for name in MODEL_API_KEY BASETEN_API_KEY FIREWORKS_API_KEY DEVICE_TOKENS APP_TOKEN CLOCK_MODE; do
             if [ -n "${!name}" ]; then printf '%s=%s\n' "$name" "${!name}" >> "$env_file"; fi
           done
-          echo "Setting: $(cut -d= -f1 "$env_file" | paste -sd ' ')"
-          modal secret create wind-buddy --from-dotenv "$env_file" --force > /dev/null
+          # Only the app's keys are worth writing: with none of them set here, keep the Modal
+          # secret as it is rather than replacing it with CLOCK_MODE alone.
+          if ! grep -qv '^CLOCK_MODE=' "$env_file"; then
+            echo "::notice::No app keys in the repository secrets: the Modal secret is left as it is."
+          else
+            echo "Setting: $(cut -d= -f1 "$env_file" | paste -sd ' ')"
+            modal secret create wind-buddy --from-dotenv "$env_file" --force > /dev/null
+          fi
           rm -f "$env_file"
 
       - name: Deploy
