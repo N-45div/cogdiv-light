@@ -110,6 +110,19 @@ void playMono(const int16_t *samples, size_t count) {
   }
 }
 
+// Let what's queued play out: the DMA buffers hold up to half a second, so push that much
+// silence after it (clearing them instead would erase a short beep before it is heard).
+void finishSound() {
+  static int16_t silence[512] = {0};
+  size_t frames = speakerRate / 2, written = 0;
+  while (frames > 0) {
+    size_t n = min(frames, (size_t)256);
+    i2s_write(I2S_NUM_0, silence, n * 4, &written, 300 / portTICK_PERIOD_MS);
+    if (written < n * 4) break;
+    frames -= n;
+  }
+}
+
 void tone(int freq, int ms) {
   if (!speakerReady) return;
   const int rate = 16000;
@@ -124,7 +137,7 @@ void tone(int freq, int ms) {
     playMono(buf, n);
     done += n;
   }
-  i2s_zero_dma_buffer(I2S_NUM_0);
+  finishSound();
 }
 
 void chime() {  // ready
@@ -239,7 +252,7 @@ bool playSpeech(const String &path) {
     playMono(pcm, n);
     played += n;
   }
-  i2s_zero_dma_buffer(I2S_NUM_0);
+  finishSound();
   free(data);
   http.end();
   logLine("said %.1f s (%d bytes, %u ms, %u waits)", played / (float)rate, size,
@@ -286,7 +299,7 @@ bool playSpeechWav(const String &path) {  // the plain WAV route (not used by de
   size_t samples = (size - 44) / 2;
   setSpeakerRate(rate);
   playMono((const int16_t *)(clip + 44), samples);
-  i2s_zero_dma_buffer(I2S_NUM_0);
+  finishSound();
   free(clip);
   logLine("said %.1f s (downloaded in %u ms)", samples / (float)rate, (unsigned)(millis() - started));
   return true;
