@@ -553,3 +553,11 @@ class ComputePlanView(BaseModel):
     pct_less_co2: float | None = Field(description="Best vs baseline, %")
     kg_co2_saved: float | None
     sites: list[SiteOut] = Field(description="Every candidate, least CO2 first")
+
+
+class BriefOut(BaseModel):
+    at: str = Field(description="The half-hour it was written for, UTC ISO")
+    text: str
+    by: str = Field(description="The model that wrote it, or 'code'")
+    check: str = Field(description="Fact-check summary, or why the model's text wasn't used")
+    facts: dict = Field(description="Every figure it may quote, worked out by code")

@@ -12,14 +12,17 @@ from fastapi.staticfiles import StaticFiles
 
 from .agent_api import router as agent_router
 from .api import router
+from .brief import brief_loop
+from .carbon import get_carbon_feed
 from .carbon_api import router as carbon_router
+from .clock import get_clock
 from .config import Settings
 from .device_api import router as device_router
 from .persist import Persistence
 from .planning_api import router as planning_router
 from .store import DataUnavailableError
+from .watch_api import get_watch_client, watch_loop
 from .watch_api import router as watch_router
-from .watch_api import watch_loop
 
 log = logging.getLogger(__name__)
 
@@ -42,9 +45,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if keeper:
             await asyncio.to_thread(keeper.load)
             tasks.append(asyncio.create_task(keeper.loop()))
-        # The watcher re-checks approved plans in the background (WATCH=0 turns it off).
+        # The watcher re-checks approved plans in the background, and the grid brief is
+        # rewritten each half-hour (WATCH=0 turns both off).
         if settings.watch:
             tasks.append(asyncio.create_task(watch_loop()))
+            tasks.append(
+                asyncio.create_task(brief_loop(get_carbon_feed, get_clock, get_watch_client))
+            )
         yield
         for task in tasks:
             task.cancel()

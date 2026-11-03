@@ -8,15 +8,17 @@ from typing import Annotated
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from .brief import BriefDesk, get_brief_desk
 from .carbon import REGIONS, CarbonFeed, CarbonForecast, CarbonUnavailableError, get_carbon_feed
 from .clock import as_utc
 from .compute import KW_PER_GPU, ComputeJob, SitePlan, average_g, kg_co2, plan_compute
 from .flex import MAX_PLAN_HOURS, blocks
 from .planning_api import ClockDep
-from .schemas import CarbonView, ComputePlanView, ComputeRequest
+from .schemas import BriefOut, CarbonView, ComputePlanView, ComputeRequest
 
 router = APIRouter(prefix="/api")
 CarbonFeedDep = Annotated[CarbonFeed, Depends(get_carbon_feed)]
+BriefDeskDep = Annotated[BriefDesk, Depends(get_brief_desk)]
 SOURCE = "NESO Carbon Intensity API (api.carbonintensity.org.uk), regional 48-hour forecast"
 
 
@@ -141,3 +143,13 @@ def compute_plan(request: ComputeRequest, feed: CarbonFeedDep, clock: ClockDep) 
         "kg_co2_saved": saved,
         "sites": [_site(s, s.slots) for s in plan.sites],
     }
+
+
+@router.get("/brief", response_model=BriefOut)
+def grid_brief(desk: BriefDeskDep, feed: CarbonFeedDep, clock: ClockDep) -> dict:
+    """The live note on where and when the grid is cleanest: written each half-hour by the
+    open-weight watcher model and fact-checked, or by code if that fails."""
+    try:
+        return desk.quick(clock.now(), feed).as_dict()
+    except CarbonUnavailableError as exc:
+        raise HTTPException(503, f"The carbon forecast is unavailable: {exc}") from exc
