@@ -23,6 +23,7 @@ from typing import Annotated
 import pandas as pd
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request
 from fastapi.responses import FileResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from . import outlook as ol
 from .agent.runner import run_agent
@@ -197,8 +198,10 @@ async def device_voice(
     if seconds > MAX_VOICE_SECONDS:
         raise HTTPException(413, f"At most {MAX_VOICE_SECONDS} s of speech")
     now = clock.now()
+    # Transcribing and planning take ~25 s of blocking network calls: run them in a worker
+    # thread, so the one container keeps answering polls and the website meanwhile.
     try:
-        transcript = voice.transcriber.transcribe(audio)
+        transcript = await run_in_threadpool(voice.transcriber.transcribe, audio)
     except VoiceUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
     registry.heard(device_id, transcript, now)
@@ -221,7 +224,7 @@ async def device_voice(
     if not planner.available():
         registry.queue_say(device_id, "Sorry, no planning model is set up on the server.")
         return reply
-    run = run_agent(transcript, data, now, planner, mode=clock.mode)
+    run = await run_in_threadpool(run_agent, transcript, data, now, planner, mode=clock.mode)
     log_.add(run)
     reply.update(answer=run.answer, verified=run.verified, run_id=run.id)
     try:
