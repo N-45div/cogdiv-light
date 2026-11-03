@@ -140,7 +140,7 @@ Code: `agent/runner.py`, `agent/tools.py`, `agent/llm.py`.
 
 ```mermaid
 flowchart LR
-    answer[Model's answer] --> extract["Find times and numbers; skip dates and years"]
+    answer["Model's answer"] --> extract["Find times and numbers, skip dates and years"]
     evidence["Tool results + the question"] --> known["Every number and time in them"]
     extract --> match{"Each figure matches a known one?"}
     known --> match
