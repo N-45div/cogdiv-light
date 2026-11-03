@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from test_agent_api import Planner
 from test_agent_runner import FakeModel, call, say
-from wind_fixtures import NOW, synthetic_carbon, synthetic_wind
+from wind_fixtures import NOW, carbon_g, synthetic_carbon, synthetic_wind
 
 from wind_monitor import agent_api, planning_api
 from wind_monitor.agent.runner import run_agent
@@ -75,12 +75,64 @@ def test_the_board_shows_says_and_runs_the_compute_plan():
     assert screen(state, done, LATEST)["title"] == "Job done"
 
 
-def test_the_watcher_leaves_compute_jobs_alone():
+def _approved_job() -> DeviceRegistry:
     registry = DeviceRegistry()
-    run = _compute_run()
-    state = registry.propose("desk-1", run, NOW)
+    state = registry.propose("desk-1", _compute_run(), NOW)  # North Scotland, 01:00-03:00
     registry.event("desk-1", {"type": "approve", "proposal_id": state.proposal.id}, NOW)
-    assert Watcher().run(NOW, registry, synthetic_wind(), None) == []
+    registry.next_news("desk-1", NOW, None)  # the proposal was announced
+    registry.next_news("desk-1", NOW, None)  # and "Great, it's booked"
+    return registry
+
+
+CHECK = NOW + pd.Timedelta(hours=1)
+
+
+def test_without_a_carbon_forecast_compute_jobs_are_not_checked():
+    assert Watcher().run(CHECK, _approved_job(), synthetic_wind(), None) == []
+
+
+def test_a_job_on_track_stays_quiet():
+    registry = _approved_job()
+    [finding] = Watcher().run(CHECK, registry, synthetic_wind(), None, synthetic_carbon(CHECK))
+    assert finding.outcome == "on_track"
+    assert finding.message == "On track: 20.8 kWh still to run in North Scotland, Fri 01:00-03:00."
+
+
+def test_a_cleaner_window_elsewhere_is_proposed():
+    def changed(region, t):  # North Scotland's early hours turn dirty; 04:00-06:00 stay clean
+        if region == 1 and t.hour < 4:
+            return 300.0
+        return carbon_g(region, t)
+
+    registry = _approved_job()
+    [finding] = Watcher().run(
+        CHECK, registry, synthetic_wind(), None, synthetic_carbon(CHECK, g=changed)
+    )
+    assert finding.outcome == "better_window"
+    assert finding.facts["newest_g_per_kwh_for_those_windows"] == 300
+    assert finding.facts["better_region"] == "North Scotland"
+    assert finding.facts["better_windows"] == ["Fri 04:00-06:00"]
+    assert finding.facts["less_co2_than_current_plan_pct"] == 100.0
+
+    state = registry.all()[0]
+    view = screen(state, CHECK, LATEST)
+    assert view["title"] == "Better window?" and "-100% CO2 vs old plan" in view["lines"]
+    speech = news(state, CHECK, None)
+    assert speech.startswith("Good news, the carbon forecast has changed. Running the job in")
+    registry.event("desk-1", {"type": "approve", "proposal_id": finding.proposal_id}, CHECK)
+    assert state.active.kind == "compute"
+    assert state.active.schedule[0]["start"].startswith("2026-01-09T04:00")
+
+
+def test_dirtier_windows_with_nowhere_cleaner_show_an_alert():
+    registry = _approved_job()
+    flat = synthetic_carbon(CHECK, g=lambda region, t: 250.0)
+    [finding] = Watcher().run(CHECK, registry, synthetic_wind(), None, flat)
+    assert finding.outcome == "carbon_up"
+    assert finding.facts["more_g_per_kwh_than_planned"] == 250
+    state = registry.all()[0]
+    assert state.alert == "Carbon +250 g vs plan"
+    assert "Carbon +250 g vs plan" in screen(state, CHECK, LATEST)["lines"]
 
 
 @pytest.fixture

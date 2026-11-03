@@ -11,11 +11,12 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 
 from .agent.llm import ChatClient, client_for
+from .carbon import CarbonFeed, CarbonUnavailableError, get_carbon_feed
 from .clock import get_clock
 from .device import DeviceRegistry, get_registry
 from .planning_api import ClockDep, PlanningDataDep, planning_data, require_app_token
 from .schemas import WatchFindingOut
-from .watcher import Watcher, get_watcher
+from .watcher import Watcher, get_watcher, is_compute
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -34,6 +35,16 @@ def get_watch_client() -> ChatClient:
 WatcherDep = Annotated[Watcher, Depends(get_watcher)]
 RegistryDep = Annotated[DeviceRegistry, Depends(get_registry)]
 WatchClientDep = Annotated[ChatClient, Depends(get_watch_client)]
+CarbonFeedDep = Annotated[CarbonFeed, Depends(get_carbon_feed)]
+
+
+def carbon_now(feed: CarbonFeed, now):
+    """The carbon forecast for compute jobs, or None if NESO isn't answering (they are skipped)."""
+    try:
+        return feed.get(now)
+    except CarbonUnavailableError as exc:
+        log.warning("Watcher: no carbon forecast, compute jobs not checked: %s", exc)
+        return None
 
 
 @router.post(
@@ -45,9 +56,12 @@ def run_watch(
     data: PlanningDataDep,
     clock: ClockDep,
     client: WatchClientDep,
+    feed: CarbonFeedDep,
 ) -> list[dict]:
     """Re-check every approved plan now (normally this happens every 30 minutes)."""
-    return [f.as_dict() for f in watcher.run(clock.now(), registry, data, client)]
+    now = clock.now()
+    carbon = carbon_now(feed, now) if any(is_compute(s) for s in registry.all()) else None
+    return [f.as_dict() for f in watcher.run(now, registry, data, client, carbon)]
 
 
 @router.get("/watch", response_model=list[WatchFindingOut])
@@ -68,7 +82,10 @@ async def watch_loop() -> None:
             if not registry.with_active_plans() or not watcher.due(now):
                 continue
             data = await run_in_threadpool(planning_data, clock)
-            await run_in_threadpool(watcher.run, now, registry, data, get_watch_client())
+            carbon = None
+            if any(is_compute(s) for s in registry.with_active_plans()):
+                carbon = await run_in_threadpool(carbon_now, get_carbon_feed(), now)
+            await run_in_threadpool(watcher.run, now, registry, data, get_watch_client(), carbon)
         except asyncio.CancelledError:
             raise
         except Exception:

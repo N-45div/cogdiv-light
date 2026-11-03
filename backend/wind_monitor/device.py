@@ -142,6 +142,15 @@ def _pct_words(pct: float | None, what: str) -> str:
 def proposal_speech(p: Proposal) -> str:
     """The plan in one or two short sentences: the screen shows the details."""
     windows = say_windows(p.windows())
+    if p.kind == "compute" and p.title.startswith("Better"):
+        best = p.plan.get("best") or {}
+        pct = p.plan.get("less_co2_than_current_plan_pct")
+        less = f"about {pct:.0f} percent less carbon" if pct else "less carbon"
+        return (
+            f"Good news, the carbon forecast has changed. Running the job in "
+            f"{best.get('region', 'another region')}, from {windows}, would emit {less} than the "
+            "current plan. Hold the button to switch, or tap to keep your plan."
+        )
     if p.kind == "compute":
         best = p.plan.get("best") or {}
         g = best.get("average_g_per_kwh")
@@ -245,7 +254,10 @@ def screen(
         lines.append(f"in {p.region}")
         lines.append(f"~{best.get('average_g_per_kwh')} g/kWh")
         less = p.plan.get("pct_less_co2_than_baseline")
-        if less is not None:
+        better = p.plan.get("less_co2_than_current_plan_pct")
+        if better is not None:
+            lines.append(f"-{better:g}% CO2 vs old plan")
+        elif less is not None:
             lines.append(f"-{less:g}% CO2 vs London")
         lines.append(p.facts)
         return _view("proposal", p.title, lines, "hold:yes  tap:no")
@@ -276,10 +288,14 @@ def screen(
         windows = a.windows()
         where = f"in {a.region}"
         g = f"~{(a.plan.get('best') or {}).get('average_g_per_kwh')} g/kWh"
+        alert = [state.alert] if state.alert else []
         current = next(((s, e) for s, e in windows if s <= now < e), None)
         if current:
             return _view(
-                "charging", "JOB RUNNING", [f"until {_hhmm(current[1])}", where, g], "hold:talk"
+                "charging",
+                "JOB RUNNING",
+                [f"until {_hhmm(current[1])}", where, g, *alert],
+                "hold:talk",
             )
         upcoming = [(s, e) for s, e in windows if s > now]
         if upcoming:
@@ -287,7 +303,7 @@ def screen(
             return _view(
                 "waiting",
                 "Waiting: clean power",
-                [f"Next {_hhmm(s)}-{_hhmm(e)}", where, g],
+                [f"Next {_hhmm(s)}-{_hhmm(e)}", where, g, *alert],
                 "hold:talk",
             )
         kg = (a.plan.get("best") or {}).get("kg_co2")

@@ -70,7 +70,7 @@ def carbon_g(region: int, moment: pd.Timestamp) -> float:
     return 100.0 + 10 * region
 
 
-def carbon_periods(start: pd.Timestamp = NOW, hours: int = 48) -> list[dict]:
+def carbon_periods(start: pd.Timestamp = NOW, hours: int = 48, g=None) -> list[dict]:
     """What the Carbon Intensity API's /regional/intensity/{from}/fw48h returns: it starts with
     the half-hour before `start`, like the real API on a half-hour boundary."""
     first = start.floor("30min") - pd.Timedelta(minutes=30)
@@ -81,7 +81,7 @@ def carbon_periods(start: pd.Timestamp = NOW, hours: int = 48) -> list[dict]:
             {
                 "regionid": rid,
                 "shortname": f"region {rid}",
-                "intensity": {"forecast": carbon_g(rid, t), "index": "moderate"},
+                "intensity": {"forecast": (g or carbon_g)(rid, t), "index": "moderate"},
                 "generationmix": [
                     {"fuel": "wind", "perc": 90.0 if rid == 1 else 20.0 if rid == 13 else 40.0},
                     {"fuel": "gas", "perc": 5.0 if rid == 1 else 50.0},
@@ -96,8 +96,9 @@ def carbon_periods(start: pd.Timestamp = NOW, hours: int = 48) -> list[dict]:
     return periods
 
 
-def synthetic_carbon(start: pd.Timestamp = NOW):
+def synthetic_carbon(start: pd.Timestamp = NOW, g=None):
+    """The synthetic forecast; `g(region, moment)` replaces carbon_g for a changed forecast."""
     from wind_monitor.carbon import CarbonForecast, forecast_frames
 
-    regions, national = forecast_frames(carbon_periods(start))
+    regions, national = forecast_frames(carbon_periods(start, g=g))
     return CarbonForecast(regions, national, start, start.floor("30min"))
