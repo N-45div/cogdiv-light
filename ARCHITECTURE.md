@@ -189,37 +189,43 @@ Code: `device.py` (registry, `screen`, `news`), `device_api.py`.
 
 ## 6. The board
 
+Connection and firmware:
+
 ```mermaid
 stateDiagram-v2
     [*] --> Boot
     Boot --> Setup: no Wi-Fi saved
-    Setup --> Boot: phone sets Wi-Fi in the "WindBuddy-Setup" portal
-    Boot --> Polling: Wi-Fi up
-    state Polling {
-        [*] --> Idle
-        Idle --> Proposal: server sends a plan
-        Proposal --> Waiting: hold 1 s = approve
-        Proposal --> Idle: tap = reject
-        Waiting --> Running: relay on
-        Running --> Waiting: relay off
-        Running --> JobDone
-        Waiting --> JobDone
-        JobDone --> Idle: next plan
-        Idle --> Listening: hold BOOT 0.35 s
-        Waiting --> Listening: hold BOOT
-        Running --> Listening: hold BOOT
-        Listening --> Sending: release, or 8 s, or quiet after speech
-        Sending --> Idle: server answers on the next polls
-    }
-    Polling --> Offline: 3 polls fail
-    Offline --> Polling: a poll works
-    Offline --> RelayOff: no server for 10 min
-    RelayOff --> Polling: a poll works
-    Polling --> Updating: server offers new firmware
-    Updating --> Trial: written, checked by MD5, restart
-    Trial --> Polling: reached the server in 3 min, kept
-    Trial --> Rollback: crashed or never reached the server
-    Rollback --> Polling: previous firmware, won't retry that image
+    Setup --> Boot: Wi-Fi set from a phone
+    Boot --> Online: Wi-Fi up, polling every 5 s
+    Online --> Offline: 3 polls fail
+    Offline --> Online: a poll works
+    Offline --> LoadOff: no server for 10 min
+    LoadOff --> Online: a poll works
+    Online --> Updating: the server offers new firmware
+    Updating --> Trial: written, MD5 checked, restart
+    Trial --> Online: reached the server within 3 min, kept
+    Trial --> RolledBack: crashed, or no server for 3 min
+    RolledBack --> Online: previous firmware, that image not retried
+```
+
+Screens and the button, while online:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Proposal: a plan arrives
+    Proposal --> Waiting: hold 1 s, approve
+    Proposal --> Idle: tap, reject
+    Waiting --> Running: a run window starts, relay on
+    Running --> Waiting: the window ends, relay off
+    Running --> Finished: the last window ends
+    Finished --> Proposal: a new plan
+    Idle --> Listening: hold BOOT
+    Waiting --> Listening: hold BOOT
+    Running --> Listening: hold BOOT
+    Listening --> Thinking: release, 8 s, or quiet after speech
+    Thinking --> Proposal: a verified plan, said aloud
+    Thinking --> Idle: an answer, said aloud
 ```
 
 - **One button.** Tap is no (or refresh), a 1 s hold is yes, and a hold in any other screen is
