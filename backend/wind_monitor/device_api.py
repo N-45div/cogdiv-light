@@ -202,7 +202,9 @@ async def device_voice(
     registry.heard(device_id, transcript, now)
     reply = {"transcript": transcript, "answer": None, "verified": False, "proposed": False}
     if len(transcript) < 3:
-        registry.queue_say(device_id, "Sorry, I didn't catch that. Hold the button and try again.")
+        registry.queue_say(
+            device_id, "Sorry, I didn't quite catch that. Hold the button and try again."
+        )
         return reply
     if not planner.available():
         registry.queue_say(device_id, "Sorry, no planning model is set up on the server.")

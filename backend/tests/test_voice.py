@@ -80,12 +80,18 @@ def _heard_last(client):
     return state["say"]
 
 
-def test_spoken_text_reads_units_and_times():
-    text = "**Charge 21:30-00:30**: 14 kWh at 7 kW, wind 7.5 GW (+12% vs plug-in)."
+def test_spoken_text_sounds_like_a_person():
+    text = "**Charge 21:30-00:00**: 14 kWh at 7 kW, wind 7.5 GW (+12% vs plug-in)."
     assert spoken(text) == (
-        "Charge 21:30 to 00:30: 14 kilowatt hours at 7 kilowatts, wind 7.5 gigawatts "
+        "Charge from 9:30 pm to midnight: 14 kilowatt hours at 7 kilowatts, wind 7.5 gigawatts "
         "(+12 percent compared with plug-in)."
     )
+    agent = "Charge 19:00 to 22:00. Expected wind is 6968 MW, 12.7% more than at 07:00."
+    assert spoken(agent) == (
+        "Charge from 7 pm to 10 pm. Expected wind is about 7 gigawatts, "
+        "about 13 percent more than at 7 am."
+    )
+    assert spoken("Start at 12:00 or 00:30.") == "Start at noon or 12:30 am."
 
 
 def test_a_spoken_night(world):
@@ -94,8 +100,8 @@ def test_a_spoken_night(world):
 
     run = client.post("/api/agent/ask", json={"question": QUESTION, "device_id": "desk-1"}).json()
     say_ = _heard_last(client)
-    assert synth.spoken[-1].startswith("New charging plan.")
-    assert synth.spoken[-1].endswith("Hold the button to approve, or tap to skip.")
+    assert synth.spoken[-1].startswith("Here's my plan.")
+    assert synth.spoken[-1].endswith("Hold the button for yes, or tap for no.")
     assert say_["path"] == f"/api/device/desk-1/speech/{say_['id']}"
     clip = client.get(say_["path"])
     assert clip.status_code == 200 and wav_info(clip.content)[0] == 22050
@@ -105,20 +111,20 @@ def test_a_spoken_night(world):
 
     approve = {"type": "approve", "proposal_id": run["id"]}
     after = client.post("/api/device/desk-1/event", json=approve).json()
-    assert synth.spoken[-1] == "Approved. Charging starts at 02:00."
+    assert synth.spoken[-1] == "Great, it's booked. I'll start charging at 2 am."
     assert after["say"]["id"] > say_["id"]
 
     clock.set(at=NOW.replace(day=9, hour=2, minute=15))
     _heard_last(client)
-    assert synth.spoken[-1].startswith("Charging now. Wind is ")
+    assert synth.spoken[-1].startswith("Charging now. The wind across Britain is about ")
     assert synth.spoken[-1].endswith("gigawatts.")
 
     clock.set(at=NOW.replace(day=9, hour=4))
     _heard_last(client)
-    assert synth.spoken[-1] == "Charge done: 14 kilowatt hours, all in windy hours."
+    assert synth.spoken[-1] == "All done! 14 kilowatt hours, charged in the windiest hours."
 
     events = [e["event"] for e in client.get("/api/devices").json()[0]["events"]]
-    assert any(e.startswith("said: Charge done") for e in events)
+    assert any(e.startswith("said: All done!") for e in events)
 
 
 def test_a_relay_test_is_not_announced(world):
@@ -136,7 +142,7 @@ def test_push_to_talk_becomes_a_spoken_proposal(world):
     assert reply["transcript"] == QUESTION and reply["proposed"] is True
     assert reply["verified"] is True and reply["run_id"]
     state = client.get("/api/device/desk-1/state").json()
-    assert state["mode"] == "proposal" and synth.spoken[-1].startswith("New charging plan.")
+    assert state["mode"] == "proposal" and synth.spoken[-1].startswith("Here's my plan.")
     events = [e["event"] for e in client.get("/api/devices").json()[0]["events"]]
     assert f"heard: {QUESTION}" in events
 
@@ -147,7 +153,7 @@ def test_unclear_speech_gets_a_spoken_retry(world):
     reply = client.post("/api/device/desk-1/voice", content=make_wav()).json()
     assert reply["transcript"] == "" and reply["proposed"] is False
     _heard_last(client)
-    assert synth.spoken[-1].startswith("Sorry, I didn't catch that.")
+    assert synth.spoken[-1].startswith("Sorry, I didn't quite catch that.")
 
 
 @pytest.mark.parametrize(

@@ -31,8 +31,8 @@ void setupAudio() {
   spk.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
   spk.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
   spk.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-  spk.dma_buf_count = 8;
-  spk.dma_buf_len = 256;
+  spk.dma_buf_count = 16;
+  spk.dma_buf_len = 512;
   spk.tx_desc_auto_clear = true;
   i2s_pin_config_t spkPins = {};
   spkPins.mck_io_num = I2S_PIN_NO_CHANGE;
@@ -131,29 +131,35 @@ bool playSpeech(const String &path) {
     http.end();
     return false;
   }
-  WiFiClient *s = http.getStreamPtr();
-  uint8_t header[44];
-  if (readFully(s, header, sizeof(header)) != sizeof(header) || memcmp(header, "RIFF", 4)) {
-    logLine("speech: not a WAV");
+  // Download the whole clip first (PSRAM), then play it: playing while downloading over HTTPS
+  // stutters whenever the network falls behind the speaker.
+  int size = http.getSize();
+  if (size <= 44 || size > 3 * 1024 * 1024) {
+    logLine("speech: bad size %d", size);
     http.end();
     return false;
   }
-  uint32_t rate = header[24] | (header[25] << 8) | (header[26] << 16) | ((uint32_t)header[27] << 24);
-  i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
-  int remaining = http.getSize() > 44 ? http.getSize() - 44 : -1;
-  int16_t buf[256];
-  uint32_t samples = 0;
-  while (remaining != 0) {
-    size_t want = remaining < 0 ? sizeof(buf) : min((size_t)remaining, sizeof(buf));
-    size_t got = readFully(s, (uint8_t *)buf, want);
-    if (got < 2) break;
-    playMono(buf, got / 2);
-    samples += got / 2;
-    if (remaining > 0) remaining -= got;
+  uint8_t *clip = (uint8_t *)ps_malloc(size);
+  if (!clip) {
+    logLine("speech: out of memory");
+    http.end();
+    return false;
   }
-  i2s_zero_dma_buffer(I2S_NUM_0);
+  uint32_t started = millis();
+  size_t got = readFully(http.getStreamPtr(), clip, size, 8000);
   http.end();
-  logLine("said %.1f s", samples / (float)rate);
+  if (got != (size_t)size || memcmp(clip, "RIFF", 4)) {
+    logLine("speech: got %u of %d bytes", (unsigned)got, size);
+    free(clip);
+    return false;
+  }
+  uint32_t rate = clip[24] | (clip[25] << 8) | (clip[26] << 16) | ((uint32_t)clip[27] << 24);
+  size_t samples = (size - 44) / 2;
+  i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+  playMono((const int16_t *)(clip + 44), samples);
+  i2s_zero_dma_buffer(I2S_NUM_0);
+  free(clip);
+  logLine("said %.1f s (downloaded in %u ms)", samples / (float)rate, (unsigned)(millis() - started));
   return true;
 }
 

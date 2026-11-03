@@ -109,22 +109,44 @@ def wav_info(data: bytes) -> tuple[int, int, int, float]:
         raise ValueError("Not a PCM WAV file") from exc
 
 
-_UNITS = [
+def _clock(match: re.Match) -> str:
+    """24-hour time as people say it: 19:00 -> 7 pm, 00:00 -> midnight, 07:30 -> 7:30 am."""
+    hour, minute = int(match.group(1)), int(match.group(2))
+    if minute == 0 and hour in (0, 12):
+        return "midnight" if hour == 0 else "noon"
+    suffix = "am" if hour < 12 else "pm"
+    hour12 = hour % 12 or 12
+    return f"{hour12} {suffix}" if minute == 0 else f"{hour12}:{minute:02d} {suffix}"
+
+
+def _megawatts(match: re.Match) -> str:
+    gw = float(match.group(1)) / 1000
+    return f"about {gw:.1f}".rstrip("0").rstrip(".") + " gigawatts"
+
+
+def _percent(match: re.Match) -> str:
+    return f"about {round(float(match.group(1)))} percent"
+
+
+_SPEECH = [
+    (r"(\d{1,2}:\d{2})\s*(?:[-–]|to)\s*(\d{1,2}:\d{2})", r"from \1 to \2"),
+    (r"\bfrom from\b", "from"),
+    (r"\b([01]?\d|2[0-3]):([0-5]\d)\b", _clock),
+    (r"(\d+(?:\.\d+)?)\s*MW\b", _megawatts),
+    (r"(\d+\.\d+)\s*%", _percent),
     (r"(\d)\s*kWh\b", r"\1 kilowatt hours"),
     (r"(\d)\s*kW\b", r"\1 kilowatts"),
     (r"(\d)\s*GW\b", r"\1 gigawatts"),
-    (r"(\d)\s*MW\b", r"\1 megawatts"),
     (r"(\d)\s*%", r"\1 percent"),
-    (r"(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})", r"\1 to \2"),
     (r"\bvs\.?\b", "compared with"),
     (r"\bUK\b", "U K"),
 ]
 
 
 def spoken(text: str) -> str:
-    """Text as it should be read aloud: units in words, no markdown."""
+    """Text as it should be read aloud: times and units as people say them, no markdown."""
     text = re.sub(r"[*_#`>]+", "", text)
-    for pattern, replacement in _UNITS:
+    for pattern, replacement in _SPEECH:
         text = re.sub(pattern, replacement, text)
     return re.sub(r"\s+", " ", text).strip()
 

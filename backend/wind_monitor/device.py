@@ -117,7 +117,7 @@ def relay_on(active: Proposal | None, now: pd.Timestamp) -> bool:
 
 
 def _gw_words(mw: float | None) -> str:
-    return "unknown" if mw is None else f"{mw / 1000:.1f} gigawatts"
+    return "hard to say right now" if mw is None else f"about {mw / 1000:.1f} gigawatts"
 
 
 def news(state: DeviceState, now: pd.Timestamp, wind_mw: float | None) -> str | None:
@@ -132,21 +132,28 @@ def news(state: DeviceState, now: pd.Timestamp, wind_mw: float | None) -> str | 
     if state.proposal and said.get("proposal") != state.proposal.id:
         said["proposal"] = state.proposal.id
         p = state.proposal
-        intro = "Better window." if p.title.startswith("Better") else "New charging plan."
-        return f"{intro} {p.answer or ''} Hold the button to approve, or tap to skip."
+        if p.title.startswith("Better"):
+            return (
+                f"Good news, the forecast has changed. {p.answer or ''} "
+                "Want to switch? Hold the button for yes, or tap for no."
+            )
+        return (
+            f"Here's my plan. {p.answer or ''} "
+            "Shall I go ahead? Hold the button for yes, or tap for no."
+        )
     plan_on = relay_on(state.active, now)
     if plan_on != said.get("relay", False):
         said["relay"] = plan_on
         if plan_on:
-            return f"Charging now. Wind is {_gw_words(wind_mw)}."
+            return f"Charging now. The wind across Britain is {_gw_words(wind_mw)}."
         if state.active and not any(s > now for s, _ in state.active.windows()):
             kwh = sum(w["energy_kwh"] for w in state.active.schedule)
-            return f"Charge done: {kwh:g} kilowatt hours, all in windy hours."
-        return "Charging paused until the next windy window."
+            return f"All done! {kwh:g} kilowatt hours, charged in the windiest hours."
+        return "Pausing for now. I'll pick up again in the next windy window."
     if state.alert != said.get("alert"):
         said["alert"] = state.alert
         if state.alert:
-            return f"Heads up. {state.alert}."
+            return f"Heads up. {state.alert}. I'm keeping an eye on it."
     return None
 
 
@@ -260,10 +267,12 @@ class DeviceRegistry:
                     state.active = pending
                     state.alert = None
                     starts = [s for s, _ in pending.windows() if s > now]
-                    when = f"Charging starts at {_hhmm(starts[0])}." if starts else ""
-                    state.to_say.append(f"Approved. {when}".strip())
+                    when = (
+                        f"I'll start charging at {_hhmm(starts[0])}." if starts else "Charging now."
+                    )
+                    state.to_say.append(f"Great, it's booked. {when}")
                 else:
-                    state.to_say.append("Okay, plan skipped.")
+                    state.to_say.append("No problem, I've dropped that plan.")
                 state.changed(f"{PAST[kind]} {pending.id}", now)
             elif kind == "stop":
                 if state.active is not None:
@@ -271,7 +280,7 @@ class DeviceRegistry:
                     state.active = None
                     state.alert = None
                     state.said["relay"] = False
-                    state.to_say.append("Charging stopped.")
+                    state.to_say.append("Okay, I've stopped charging.")
             elif kind == "telemetry":
                 state.telemetry = {k: v for k, v in event.items() if k not in ("type", "log")}
                 if state.update_to and state.telemetry.get("firmware") == state.update_to:
