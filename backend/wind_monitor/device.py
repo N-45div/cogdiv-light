@@ -337,11 +337,17 @@ class DeviceRegistry:
         with self._lock:
             state = self._get(device_id)
             state.say = {"id": clip_id, "text": text}
-            state.events.appendleft({"at": now.isoformat(), "event": f"said: {text[:80]}"})
+            # `text` keeps the whole sentence for the web console's conversation view.
+            event = {"at": now.isoformat(), "event": f"said: {text[:80]}", "text": text}
+            state.events.appendleft(event)
 
     def heard(self, device_id: str, transcript: str, now: pd.Timestamp) -> None:
         with self._lock:
-            event = {"at": now.isoformat(), "event": f"heard: {transcript[:80] or '(nothing)'}"}
+            event = {
+                "at": now.isoformat(),
+                "event": f"heard: {transcript[:80] or '(nothing)'}",
+                "text": transcript,
+            }
             self._get(device_id).events.appendleft(event)
 
     def seen(self, device_id: str, now: pd.Timestamp) -> DeviceState:
