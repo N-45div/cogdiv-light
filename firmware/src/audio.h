@@ -24,8 +24,15 @@ bool speakerReady = false, micReady = false;
 bool talking = false, talkedThisPress = false, handsFree = false, heardSpeech = false;
 uint32_t talkStartMs = 0, lastLoudMs = 0;
 int32_t noiseLevel = 0, peakLevel = 0;
-int16_t *talkBuf = nullptr;
+int16_t *talkBuf = nullptr;   // what is sent: 16-bit, gain set per recording
+int32_t *rawBuf = nullptr;    // what the mic heard: 24-bit, kept until the gain is known
 size_t talkSamples = 0;
+size_t clippedSamples = 0;    // samples that would have clipped at the old fixed gain
+// The old fixed gain (>> 13, 8x) clipped every sample: the logs showed "loudest 32767" for
+// ordinary speech. Each recording is now scaled after the fact: its DC offset removed and its
+// loudest moment set to MIC_PEAK, but never more than MAX_GAIN (so silence isn't blown up).
+static const float MIC_PEAK = 26000.0f;
+static const float MAX_GAIN = 1.0f / 8.0f;  // 24-bit -> 16-bit; the old fixed gain was 1/32
 int lastSayId = -2;  // -2: no poll yet (don't replay old speech after a restart)
 
 uint32_t speakerRate = 0;
@@ -85,7 +92,8 @@ void setupAudio() {
              i2s_set_pin(I2S_NUM_1, &micPins) == ESP_OK;
   if (micReady) i2s_stop(I2S_NUM_1);  // runs only while talking
   talkBuf = (int16_t *)ps_malloc(TALK_MAX_SAMPLES * sizeof(int16_t));
-  if (!talkBuf) micReady = false;
+  rawBuf = (int32_t *)ps_malloc(TALK_MAX_SAMPLES * sizeof(int32_t));
+  if (!talkBuf || !rawBuf) micReady = false;
   logLine("audio: speaker %s, mic %s", speakerReady ? "ok" : "FAILED", micReady ? "ok" : "FAILED");
 }
 
@@ -325,7 +333,7 @@ void startTalking() {
   }
   talking = talkedThisPress = true;
   handsFree = heardSpeech = false;
-  talkSamples = 0;
+  talkSamples = clippedSamples = 0;
   noiseLevel = peakLevel = 0;
   tone(880, 70);  // "listening"
   i2s_start(I2S_NUM_1);
@@ -342,8 +350,10 @@ void readMic() {
   size_t n = got / 4;
   int64_t energy = 0;
   for (size_t i = 0; i < n && talkSamples < TALK_MAX_SAMPLES; i++) {
+    // The level (for "is anyone speaking?") keeps the old scale, so detection is unchanged.
     int32_t v = constrain(raw[i] >> 13, -32768, 32767);
-    talkBuf[talkSamples++] = (int16_t)v;
+    if (v == 32767 || v == -32768) clippedSamples++;
+    rawBuf[talkSamples++] = raw[i] >> 8;  // INMP441: 24 bits, left-aligned in the 32-bit slot
     energy += (int64_t)v * v;
   }
   if (talkSamples >= TALK_MAX_SAMPLES) {
@@ -428,13 +438,34 @@ void sendVoice(const int16_t *samples, size_t count) {
   nextPollMs = 0;  // pick up the spoken answer now
 }
 
+// Scale samples [from, to) of rawBuf into talkBuf: DC removed, loudest at MIC_PEAK.
+float scaleRecording(size_t from, size_t to) {
+  if (to <= from) return 0;
+  int64_t sum = 0;
+  for (size_t i = from; i < to; i++) sum += rawBuf[i];
+  int32_t dc = (int32_t)(sum / (int64_t)(to - from));
+  int32_t peak = 1;
+  for (size_t i = from; i < to; i++) {
+    int32_t d = rawBuf[i] - dc;
+    if (d < 0) d = -d;
+    if (d > peak) peak = d;
+  }
+  float gain = min(MIC_PEAK / (float)peak, MAX_GAIN);
+  for (size_t i = from; i < to; i++) {
+    talkBuf[i] = (int16_t)constrain(lroundf((rawBuf[i] - dc) * gain), -32767L, 32767L);
+  }
+  logLine("mic: dc %ld, peak %ld of 8388607, gain 1/%.0f", (long)dc, (long)peak, 1.0f / gain);
+  return gain;
+}
+
 void finishTalking() {
   if (!talking) return;
   talking = handsFree = false;
   i2s_stop(I2S_NUM_1);
   float seconds = talkSamples / (float)MIC_RATE;
-  logLine("recorded %.1f s, mic level: room %d, loudest %d", seconds, (int)noiseLevel,
-          (int)peakLevel);
+  logLine("recorded %.1f s, mic level: room %d, loudest %d, clipped at old gain %d%%", seconds,
+          (int)noiseLevel, (int)peakLevel,
+          talkSamples ? (int)(clippedSamples * 100 / talkSamples) : 0);
   // Drop the first 100 ms (button click and mic start-up).
   size_t skip = min(talkSamples, (size_t)(MIC_RATE / 10));
   if (seconds < 0.6f) {
@@ -443,6 +474,7 @@ void finishTalking() {
     return;
   }
   tone(660, 70);  // "got it"
+  scaleRecording(skip, talkSamples);
   logLine("sending %.1f s of speech", seconds);
   sendVoice(talkBuf + skip, talkSamples - skip);
 }
