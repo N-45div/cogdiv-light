@@ -148,8 +148,10 @@ struct Adpcm {
   }
 };
 
+bool playSpeechWav(const String &path);
+
 // Plays the server's compact speech as it downloads: about 8 KB per second of speech, so the
-// download keeps ahead of the speaker after a short head start.
+// download keeps ahead of the speaker after a short head start. Falls back to the WAV.
 bool playSpeech(const String &path) {
   if (!speakerReady) return false;
   HTTPClient http;
@@ -160,10 +162,11 @@ bool playSpeech(const String &path) {
   uint32_t started = millis();
   int code = http.GET();
   int size = http.getSize();
+  uint32_t gotHeaders = millis() - started;
   if (code != 200 || size <= 12 || size > 2 * 1024 * 1024) {
-    logLine("speech %s -> HTTP %d, %d bytes", path.c_str(), code, size);
+    logLine("speech %s -> HTTP %d, %d bytes: trying WAV", path.c_str(), code, size);
     http.end();
-    return false;
+    return playSpeechWav(path);
   }
   uint8_t *data = (uint8_t *)ps_malloc(size);
   if (!data) {
@@ -187,10 +190,14 @@ bool playSpeech(const String &path) {
     if (s->available() <= 0) delay(2);
   }
   if (have < 12 || memcmp(data, "WBA1", 4)) {
-    logLine("speech: not compact audio");
+    logLine("speech: compact failed (%u of %d bytes, starts %02x%02x%02x%02x, headers %u ms, "
+            "connected %d): trying WAV",
+            (unsigned)have, size, have > 0 ? data[0] : 0, have > 1 ? data[1] : 0,
+            have > 2 ? data[2] : 0, have > 3 ? data[3] : 0, (unsigned)gotHeaders,
+            (int)s->connected());
     free(data);
     http.end();
-    return false;
+    return playSpeechWav(path);
   }
   uint32_t rate = data[4] | (data[5] << 8) | (data[6] << 16) | ((uint32_t)data[7] << 24);
   uint32_t total = data[8] | (data[9] << 8) | (data[10] << 16) | ((uint32_t)data[11] << 24);

@@ -266,8 +266,9 @@ class Voice:
 
     def speak(self, text: str) -> Clip:
         wav_bytes = self.synthesizer.synthesize(spoken(text))
+        device_audio = compact(wav_bytes)  # ready before the device asks for it
         with self._lock:
-            clip = Clip(self._next_id, text, wav_bytes)
+            clip = Clip(self._next_id, text, wav_bytes, device_audio)
             self._next_id += 1
             self._clips[clip.id] = clip
             while len(self._clips) > MAX_CLIPS:
