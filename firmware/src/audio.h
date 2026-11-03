@@ -175,20 +175,8 @@ bool playSpeech(const String &path) {
     return false;
   }
   WiFiClient *s = http.getStreamPtr();
-  size_t have = 0, used = 12;
-  uint32_t lastData = millis();
-  auto pull = [&]() {  // take whatever has arrived, without waiting
-    int avail = s->available();
-    if (avail > 0) {
-      int got = s->read(data + have, min((size_t)avail, (size_t)size - have));
-      lastData = millis();
-    }
-  };
   // Head start: the header plus about 0.75 s of speech (or the whole clip if shorter).
-  while (have < min((size_t)size, (size_t)(12 + 6000)) && millis() - lastData < 5000) {
-    pull();
-    if (s->available() <= 0) delay(2);
-  }
+  size_t have = readFully(s, data, min((size_t)size, (size_t)(12 + 6000)), 8000), used = 12;
   if (have < 12 || memcmp(data, "WBA1", 4)) {
     logLine("speech: compact failed (%u of %d bytes, starts %02x%02x%02x%02x, headers %u ms, "
             "connected %d): trying WAV",
@@ -206,13 +194,14 @@ bool playSpeech(const String &path) {
   int16_t pcm[512];
   uint32_t played = 0, underruns = 0;
   while (played < total) {
-    pull();
-    if (used >= have) {  // speaker caught up with the download: wait for more
-      if (have >= (size_t)size || millis() - lastData > 5000) break;
-      underruns++;
-      delay(5);
-      continue;
+    // Fetch the next block (about 64 ms of speech; the link brings it in about 40 ms, and the
+    // speaker's DMA holds half a second, so it never runs dry).
+    if (have < (size_t)size && have - used < 2048) {
+      size_t got = readFully(s, data + have, min((size_t)size - have, (size_t)512), 3000);
+      have += got;
+      if (got == 0) underruns++;
     }
+    if (used >= have) break;  // nothing more arrived
     size_t bytes = min(have - used, (size_t)256);
     size_t n = 0;
     for (size_t i = 0; i < bytes && played + n < total; i++) {
