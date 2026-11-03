@@ -28,7 +28,7 @@ from starlette.concurrency import run_in_threadpool
 from . import outlook as ol
 from .agent.runner import run_agent
 from .agent.runs import RunLog, get_run_log
-from .agent_api import PlannerDep
+from .agent_api import CarbonFeedDep, PlannerDep
 from .config import UK_TZ
 from .device import (
     DeviceError,
@@ -184,6 +184,7 @@ async def device_voice(
     voice: VoiceDep,
     planner: PlannerDep,
     log_: RunLogDep,
+    carbon: CarbonFeedDep,
 ) -> dict:
     """Push-to-talk: a WAV (16 kHz mono 16-bit) in the request body. It is transcribed with
     Meta Muse Voice Transcribe and sent to the agent; a verified plan is proposed to this
@@ -224,7 +225,15 @@ async def device_voice(
     if not planner.available():
         registry.queue_say(device_id, "Sorry, no planning model is set up on the server.")
         return reply
-    run = await run_in_threadpool(run_agent, transcript, data, now, planner, mode=clock.mode)
+    run = await run_in_threadpool(
+        run_agent,
+        transcript,
+        data,
+        now,
+        planner,
+        mode=clock.mode,
+        carbon=lambda: carbon.get(now),
+    )
     log_.add(run)
     reply.update(answer=run.answer, verified=run.verified, run_id=run.id)
     try:

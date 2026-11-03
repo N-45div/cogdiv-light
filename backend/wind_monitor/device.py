@@ -37,14 +37,16 @@ class Proposal:
     facts: str  # fact-check summary, e.g. "facts checked 4/4"
     job: dict | None = None  # energy, power, deadline: what the watcher re-plans
     title: str = "Charge plan?"
+    kind: str = "charge"  # "charge" or "compute"
 
     @classmethod
-    def from_run(cls, run: AgentRun, title: str = "Charge plan?") -> Proposal:
+    def from_run(cls, run: AgentRun, title: str | None = None) -> Proposal:
         """Only a verified run with a feasible plan may become a proposal."""
         if not run.verified:
             raise ValueError("Only fact-checked answers can be sent to a device")
         if not run.plan or not run.schedule or not run.plan.get("feasible"):
-            raise ValueError("This run has no feasible charging plan")
+            raise ValueError("This run has no feasible plan")
+        kind = getattr(run, "kind", "charge")
         return cls(
             run.id,
             run.question,
@@ -53,8 +55,14 @@ class Proposal:
             run.plan,
             run.factcheck["summary"] if run.factcheck else "",
             run.job,
-            title,
+            title or ("Compute plan?" if kind == "compute" else "Charge plan?"),
+            kind,
         )
+
+    @property
+    def region(self) -> str:
+        """Where a compute job runs."""
+        return (self.plan.get("best") or {}).get("region", "")
 
     def windows(self) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
         return [(pd.Timestamp(w["start"]), pd.Timestamp(w["end"])) for w in self.schedule]
@@ -120,6 +128,57 @@ def _gw_words(mw: float | None) -> str:
     return "hard to say right now" if mw is None else f"about {mw / 1000:.1f} gigawatts"
 
 
+def say_windows(windows: list[tuple[pd.Timestamp, pd.Timestamp]]) -> str:
+    """ "21:00 to 23:00 and 02:00 to 03:00, plus 1 more": two windows at most, then a count.
+    The speech step reads HH:MM out as "9 pm"."""
+    said = " and ".join(f"{_hhmm(s)} to {_hhmm(e)}" for s, e in windows[:2])
+    return said + (f", plus {len(windows) - 2} more" if len(windows) > 2 else "")
+
+
+def _pct_words(pct: float | None, what: str) -> str:
+    return "" if pct is None or pct < 1 else f", {pct:.0f} percent {what}"
+
+
+def proposal_speech(p: Proposal) -> str:
+    """The plan in one or two short sentences: the screen shows the details."""
+    windows = say_windows(p.windows())
+    if p.kind == "compute":
+        best = p.plan.get("best") or {}
+        g = best.get("average_g_per_kwh")
+        cleaner = _pct_words(
+            p.plan.get("pct_less_co2_than_baseline"), "less carbon than starting now in London"
+        )
+        return (
+            f"Here's my plan: run the job in {best.get('region', 'the cleanest region')}, "
+            f"from {windows}, at about {g} grams of carbon per kilowatt hour{cleaner}. "
+            "Hold the button for yes, or tap for no."
+        )
+    if p.title.startswith("Better"):
+        pct = p.plan.get("more_wind_than_current_plan_pct")
+        more = f"about {pct:.0f} percent more wind" if pct else "more wind"
+        return (
+            f"Good news, the forecast has changed. Charging from {windows} would catch {more}. "
+            "Hold the button to switch, or tap to keep your plan."
+        )
+    if p.plan.get("goal") == "carbon":
+        g = p.plan.get("grid_carbon_while_charging_g_per_kwh")
+        less = _pct_words(
+            p.plan.get("less_carbon_than_charging_straight_away_pct"), "less than plugging in now"
+        )
+        detail = (
+            f"when the grid should be cleanest, about {g} grams of carbon per kilowatt hour{less}"
+        )
+    else:
+        gw = _gw_words(p.plan.get("expected_wind_while_charging_mw"))
+        more = _pct_words(
+            p.plan.get("more_wind_than_charging_straight_away_pct"), "more than plugging in now"
+        )
+        detail = f"when the wind should be {gw}{more}"
+    return (
+        f"Here's my plan: charge from {windows}, {detail}. Hold the button for yes, or tap for no."
+    )
+
+
 def news(state: DeviceState, now: pd.Timestamp, wind_mw: float | None) -> str | None:
     """The next thing the device should say, if anything (and mark it said).
 
@@ -131,23 +190,29 @@ def news(state: DeviceState, now: pd.Timestamp, wind_mw: float | None) -> str | 
     said = state.said
     if state.proposal and said.get("proposal") != state.proposal.id:
         said["proposal"] = state.proposal.id
-        p = state.proposal
-        if p.title.startswith("Better"):
-            return (
-                f"Good news, the forecast has changed. {p.answer or ''} "
-                "Want to switch? Hold the button for yes, or tap for no."
-            )
-        return (
-            f"Here's my plan. {p.answer or ''} "
-            "Shall I go ahead? Hold the button for yes, or tap for no."
-        )
+        return proposal_speech(state.proposal)
     plan_on = relay_on(state.active, now)
     if plan_on != said.get("relay", False):
         said["relay"] = plan_on
+        active = state.active
+        finished = active and not any(s > now for s, _ in active.windows())
+        if active and active.kind == "compute":
+            if plan_on:
+                return f"The compute job is running now, on clean power in {active.region}."
+            if finished:
+                kg = (active.plan.get("best") or {}).get("kg_co2")
+                base = (active.plan.get("baseline") or {}).get("kg_co2")
+                return (
+                    f"All done! The job finished with {kg:g} kilograms of carbon, "
+                    f"instead of {base:g} in London."
+                    if kg is not None and base is not None
+                    else "All done! The job finished on clean power."
+                )
+            return "Pausing the job for now. It picks up again in the next clean window."
         if plan_on:
             return f"Charging now. The wind across Britain is {_gw_words(wind_mw)}."
-        if state.active and not any(s > now for s, _ in state.active.windows()):
-            kwh = sum(w["energy_kwh"] for w in state.active.schedule)
+        if finished:
+            kwh = sum(w["energy_kwh"] for w in active.schedule)
             return f"All done! {kwh:g} kilowatt hours, charged in the windiest hours."
         return "Pausing for now. I'll pick up again in the next windy window."
     if state.alert != said.get("alert"):
@@ -170,6 +235,20 @@ def screen(
         relay = "ON" if state.test_relay else "OFF"
         lines = [f"Relay {relay} for {left} s", "(from the server)"]
         return _view("test", "Relay test", lines, None)
+    if state.proposal and state.proposal.kind == "compute":
+        p = state.proposal
+        best = p.plan.get("best") or {}
+        windows = p.windows()
+        lines = [f"{_hhmm(s)}-{_hhmm(e)}" for s, e in windows[:2]]
+        if len(windows) > 2:
+            lines[1] = f"+{len(windows) - 1} more windows"
+        lines.append(f"in {p.region}")
+        lines.append(f"~{best.get('average_g_per_kwh')} g/kWh")
+        less = p.plan.get("pct_less_co2_than_baseline")
+        if less is not None:
+            lines.append(f"-{less:g}% CO2 vs London")
+        lines.append(p.facts)
+        return _view("proposal", p.title, lines, "hold:yes  tap:no")
     if state.proposal:
         p = state.proposal
         windows = p.windows()
@@ -180,6 +259,9 @@ def screen(
         if len(windows) > MAX_WINDOW_LINES:
             lines.append(f"+{len(windows) - MAX_WINDOW_LINES} more windows")
         lines.append(f"Wind ~{_gw(p.plan.get('expected_wind_while_charging_mw'))}")
+        carbon = p.plan.get("grid_carbon_while_charging_g_per_kwh")
+        if carbon is not None and len(windows) < MAX_WINDOW_LINES:
+            lines.append(f"Grid ~{carbon} g/kWh")
         better = p.plan.get("more_wind_than_current_plan_pct")
         gain = p.plan.get("more_wind_than_charging_straight_away_pct")
         if better is not None:
@@ -188,6 +270,28 @@ def screen(
             lines.append(f"{gain:+g}% vs plug-in")
         lines.append(p.facts)
         return _view("proposal", p.title, lines, "hold:yes  tap:no")
+
+    if state.active and state.active.kind == "compute":
+        a = state.active
+        windows = a.windows()
+        where = f"in {a.region}"
+        g = f"~{(a.plan.get('best') or {}).get('average_g_per_kwh')} g/kWh"
+        current = next(((s, e) for s, e in windows if s <= now < e), None)
+        if current:
+            return _view(
+                "charging", "JOB RUNNING", [f"until {_hhmm(current[1])}", where, g], "hold:talk"
+            )
+        upcoming = [(s, e) for s, e in windows if s > now]
+        if upcoming:
+            s, e = upcoming[0]
+            return _view(
+                "waiting",
+                "Waiting: clean power",
+                [f"Next {_hhmm(s)}-{_hhmm(e)}", where, g],
+                "hold:talk",
+            )
+        kg = (a.plan.get("best") or {}).get("kg_co2")
+        return _view("done", "Job done", [where, f"{kg:g} kg CO2" if kg is not None else ""], None)
 
     if state.active:
         windows = state.active.windows()
@@ -243,7 +347,7 @@ class DeviceRegistry:
             return list(self._devices.values())
 
     def propose(
-        self, device_id: str, run: AgentRun, now: pd.Timestamp, title: str = "Charge plan?"
+        self, device_id: str, run: AgentRun, now: pd.Timestamp, title: str | None = None
     ) -> DeviceState:
         proposal = Proposal.from_run(run, title)
         self.propose_proposal(device_id, proposal, now)
@@ -267,8 +371,11 @@ class DeviceRegistry:
                     state.active = pending
                     state.alert = None
                     starts = [s for s, _ in pending.windows() if s > now]
+                    what = "the job" if pending.kind == "compute" else "charging"
                     when = (
-                        f"I'll start charging at {_hhmm(starts[0])}." if starts else "Charging now."
+                        f"I'll start {what} at {_hhmm(starts[0])}."
+                        if starts
+                        else f"Starting {what} now."
                     )
                     state.to_say.append(f"Great, it's booked. {when}")
                 else:

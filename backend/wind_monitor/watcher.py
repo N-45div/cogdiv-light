@@ -220,6 +220,13 @@ def _proposal_run(device: str, finding_facts: dict, plan, message: str, job: dic
     return run
 
 
+def watched(state: DeviceState) -> bool:
+    """The watcher re-plans wind-led charging; compute jobs and carbon-led charges keep their
+    plan (their forecast is NESO's, re-issued half-hourly, not a wind run)."""
+    job = (state.active.job if state.active else None) or {}
+    return job.get("kind", "charge") == "charge" and job.get("goal", "wind") == "wind"
+
+
 class Watcher:
     def __init__(self, every: pd.Timedelta = WATCH_EVERY, size: int = 200) -> None:
         self.every = every
@@ -242,6 +249,8 @@ class Watcher:
             self.last = now
             found = []
             for state in registry.with_active_plans():
+                if not watched(state):
+                    continue
                 try:
                     found.append(self._check_one(state, now, registry, data, client))
                 except Exception:  # one bad device must not stop the others

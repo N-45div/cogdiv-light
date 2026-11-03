@@ -351,7 +351,10 @@ class AgentRunOut(BaseModel):
     factcheck: FactCheckOut | None
     models: list[str] = Field(description="Model behind each call, e.g. 'meta:muse-spark-1.3'")
     tool_calls: list[ToolCallOut]
-    plan: dict | None = Field(None, description="The last plan_charge result, if any")
+    plan: dict | None = Field(
+        None, description="The last plan_charge or plan_compute_job result, if any"
+    )
+    kind: str = Field("charge", description="charge (household load) or compute (compute job)")
     schedule: list[dict] = Field(
         default_factory=list, description="That plan's charging windows, UTC (start, end, kWh)"
     )
@@ -485,3 +488,68 @@ class WatchFindingOut(BaseModel):
     note_check: str | None = None
     model: str | None = None
     proposal_id: str | None = Field(None, description="Set when a better window was proposed")
+
+
+# ---- carbon intensity and compute jobs -----------------------------------------------------
+
+
+class CarbonRegionOut(BaseModel):
+    id: int
+    name: str
+    now_g: float | None = Field(description="g CO2/kWh in the current half-hour")
+    index: str | None = Field(None, description="NESO's band: very low .. very high")
+    mix: dict[str, float] = Field(description="Forecast generation mix now, % by fuel")
+    g: list[float | None] = Field(description="g CO2/kWh for each of `times`")
+
+
+class CarbonView(BaseModel):
+    as_of: datetime
+    fetched_at: datetime
+    source: str
+    times: list[datetime] = Field(description="Half-hour starts, from the current one")
+    national: list[float | None] = Field(description="GB g CO2/kWh for each of `times`")
+    gb_now_g: float | None
+    regions: list[CarbonRegionOut] = Field(description="The 14 regions, cleanest first right now")
+
+
+class ComputeRequest(BaseModel):
+    gpus: int = Field(8, ge=1, le=100_000, description="GPUs the job runs on at once")
+    hours: float = Field(gt=0, le=48, description="Run time on those GPUs")
+    earliest: datetime | None = Field(None, description="Not before (default: now)")
+    deadline: datetime | None = Field(None, description="Done by (default: 24 hours from start)")
+    interruptible: bool = Field(True, description="Checkpointed: can pause and resume")
+    regions: list[int] | None = Field(None, description="Region ids it may run in (default all)")
+    baseline: int = Field(13, ge=1, le=14, description="Where it runs by default (13 = London)")
+
+
+class SiteOut(BaseModel):
+    region_id: int
+    region: str
+    feasible: bool
+    windows: list[PlanBlock]
+    average_g: float | None = Field(description="g CO2/kWh while running, energy-weighted")
+    kg_co2: float | None
+
+
+class ComputeJobOut(BaseModel):
+    gpus: int
+    hours: float
+    kw_per_gpu: float
+    power_kw: float
+    energy_kwh: float
+    earliest: datetime
+    deadline: datetime
+    interruptible: bool
+
+
+class ComputePlanView(BaseModel):
+    as_of: datetime
+    job: ComputeJobOut
+    feasible: bool
+    best: SiteOut | None = Field(description="Least CO2: where and when to run")
+    baseline: SiteOut = Field(description="Started straight away in the baseline region")
+    time_only: SiteOut = Field(description="Baseline region at its cleanest time")
+    place_only: SiteOut | None = Field(description="Best region, started straight away")
+    pct_less_co2: float | None = Field(description="Best vs baseline, %")
+    kg_co2_saved: float | None
+    sites: list[SiteOut] = Field(description="Every candidate, least CO2 first")

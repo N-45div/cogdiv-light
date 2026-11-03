@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from .agent.llm import ChatClient, client_for
 from .agent.runner import run_agent
 from .agent.runs import RunLog, get_run_log
+from .carbon import CarbonFeed, get_carbon_feed
 from .device import DeviceRegistry, get_registry
 from .planning_api import ClockDep, PlanningDataDep, require_app_token
 from .schemas import AgentRunOut, AgentRunSummary, AskRequest
@@ -26,6 +27,7 @@ def get_planner() -> ChatClient:
 PlannerDep = Annotated[ChatClient, Depends(get_planner)]
 RunLogDep = Annotated[RunLog, Depends(get_run_log)]
 RegistryDep = Annotated[DeviceRegistry, Depends(get_registry)]
+CarbonFeedDep = Annotated[CarbonFeed, Depends(get_carbon_feed)]
 
 
 @router.post("/ask", response_model=AgentRunOut, dependencies=[Depends(require_app_token)])
@@ -36,6 +38,7 @@ def ask(
     planner: PlannerDep,
     log: RunLogDep,
     registry: RegistryDep,
+    carbon: CarbonFeedDep,
 ) -> dict:
     """Ask the agent. It calls the planning tools, answers, and has every figure fact-checked.
     The full record (models, tool calls, check) is returned and kept in the run log. With a
@@ -43,7 +46,9 @@ def ask(
     if not planner.available():
         raise HTTPException(503, "No model is configured: set MODEL_API_KEY or BASETEN_API_KEY")
     now = clock.now()
-    run = run_agent(request.question, data, now, planner, mode=clock.mode)
+    run = run_agent(
+        request.question, data, now, planner, mode=clock.mode, carbon=lambda: carbon.get(now)
+    )
     log.add(run)
     if run.answer is None:
         raise HTTPException(503, f"The agent could not answer: {run.error}")

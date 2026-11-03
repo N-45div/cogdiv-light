@@ -111,7 +111,7 @@ def test_a_spoken_night(world):
 
     run = client.post("/api/agent/ask", json={"question": QUESTION, "device_id": "desk-1"}).json()
     say_ = _heard_last(client)
-    assert synth.spoken[-1].startswith("Here's my plan.")
+    assert synth.spoken[-1].startswith("Here's my plan: charge from 2 am to 4 am, when the wind")
     assert synth.spoken[-1].endswith("Hold the button for yes, or tap for no.")
     assert say_["path"] == f"/api/device/desk-1/speech/{say_['id']}"
     clip = client.get(say_["path"])
@@ -153,7 +153,7 @@ def test_push_to_talk_becomes_a_spoken_proposal(world):
     assert reply["transcript"] == QUESTION and reply["proposed"] is True
     assert reply["verified"] is True and reply["run_id"]
     state = client.get("/api/device/desk-1/state").json()
-    assert state["mode"] == "proposal" and synth.spoken[-1].startswith("Here's my plan.")
+    assert state["mode"] == "proposal" and synth.spoken[-1].startswith("Here's my plan:")
     events = [e["event"] for e in client.get("/api/devices").json()[0]["events"]]
     assert f"heard: {QUESTION}" in events
 

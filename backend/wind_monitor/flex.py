@@ -12,6 +12,7 @@ grid in that hour, and the job goes into the best slots:
     raw       the forecast taken at face value
     expected  the forecast corrected for its typical bias (median past error)
     cautious  the low-wind case: wind there is a 90% chance of beating
+    carbon    the lowest grid carbon intensity (NESO's forecast, g CO2/kWh)
 """
 
 from __future__ import annotations
@@ -149,18 +150,40 @@ def _fill_consecutive(scores: pd.Series, energies: list[float]) -> list[float]:
     return out
 
 
-def plan_load(outlook: pd.DataFrame, job: FlexJob, basis: str = "expected") -> Plan:
-    """Put the job in the windiest slots. Where the chosen basis has no value (no error history
-    yet), the raw forecast is used for that slot."""
-    if basis not in BASIS_COLUMNS:
-        raise ValueError(f"basis must be one of {sorted(BASIS_COLUMNS)}")
-    slots = slots_for(outlook, job.earliest, job.deadline)
-    slots["score_mw"] = slots[BASIS_COLUMNS[basis]].fillna(slots["forecast_mw"])
-    energies = _slot_energies(job, len(slots))
+def allocate(job: FlexJob, scores: pd.Series) -> tuple[list[float], list[float]]:
+    """Energy for each slot (higher score = better): (planned, straight away from the start)."""
+    energies = _slot_energies(job, len(scores))
     fill = _fill_best if job.interruptible else _fill_consecutive
-    planned = slots.assign(energy_kwh=fill(slots["score_mw"], energies))
-    asap = slots.assign(energy_kwh=energies + [0.0] * (len(slots) - len(energies)))
-    return Plan(job, basis, planned, asap)
+    planned = fill(scores.reset_index(drop=True), energies)
+    return planned, energies + [0.0] * (len(scores) - len(energies))
+
+
+def with_carbon(slots: pd.DataFrame, carbon: pd.DataFrame | None) -> pd.DataFrame:
+    """Add carbon_g (g CO2/kWh) to each half-hour slot, NaN where there is no forecast."""
+    if carbon is None:
+        return slots.assign(carbon_g=math.nan)
+    values = carbon[["start_time", "intensity_g"]].rename(columns={"intensity_g": "carbon_g"})
+    return slots.merge(values, on="start_time", how="left")
+
+
+def plan_load(
+    outlook: pd.DataFrame,
+    job: FlexJob,
+    basis: str = "expected",
+    carbon: pd.DataFrame | None = None,
+) -> Plan:
+    """Put the job in the windiest slots (or, with basis "carbon", the cleanest). Where a wind
+    basis has no value (no error history yet), the raw forecast is used for that slot.
+    `carbon` (start_time, intensity_g) adds each slot's carbon intensity as carbon_g."""
+    if basis not in (*BASIS_COLUMNS, "carbon"):
+        raise ValueError(f"basis must be one of {sorted([*BASIS_COLUMNS, 'carbon'])}")
+    if basis == "carbon" and carbon is None:
+        raise ValueError("A carbon plan needs the carbon intensity forecast")
+    slots = with_carbon(slots_for(outlook, job.earliest, job.deadline), carbon)
+    wind = BASIS_COLUMNS.get(basis, "expected_mw")
+    slots["score_mw"] = slots[wind].fillna(slots["forecast_mw"])
+    planned, asap = allocate(job, -slots["carbon_g"] if basis == "carbon" else slots["score_mw"])
+    return Plan(job, basis, slots.assign(energy_kwh=planned), slots.assign(energy_kwh=asap))
 
 
 # ---- describing a plan ---------------------------------------------------------------

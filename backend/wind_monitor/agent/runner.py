@@ -13,10 +13,12 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
 import pandas as pd
 
+from ..carbon import CarbonForecast
 from ..flex import blocks
 from ..store import WindData
 from . import factcheck
@@ -24,16 +26,22 @@ from .llm import ChatClient, ModelUnavailableError
 from .tools import TOOLS, Toolbox, uk_label
 
 SYSTEM_PROMPT = """\
-You plan a household's flexible electricity use in Great Britain (an EV charger, a hot water \
-tank) so it runs when GB wind generation is high.
+You plan flexible electricity use in Great Britain so it runs on the windiest, cleanest power: \
+a household's EV charger or hot water tank, and flexible compute jobs (AI training, \
+fine-tuning, batch inference) that a data centre can move in time and place.
 
 Rules:
-- Use the tools for every fact about wind, forecasts or plans. Never guess.
+- Use the tools for every fact about wind, carbon, forecasts or plans. Never guess.
 - Quote figures exactly as the tools give them. You may round (6,628 MW -> about 6,600 MW or \
 6.6 GW) but never calculate new numbers: the tools already give every comparison you need.
 - Times are UK local time; write them as HH:MM.
-- If the user wants to charge or run something, call plan_charge. Without a deadline from the \
-user, leave it out and the tool uses the next 07:00.
+- If the user wants to charge or run a household load, call plan_charge (goal "carbon" if they \
+ask for the cleanest or lowest-carbon time). Without a deadline from the user, leave it out and \
+the tool uses the next 07:00.
+- For a compute job (GPUs, training, inference, a data centre), call plan_compute_job with the \
+GPUs and hours (or GPU-hours) the user gives. Say where and when it should run and how much \
+less CO2 that is than starting now in London.
+- For how clean the grid is, or which region is cleanest, call get_carbon_outlook.
 - If a tool returns an error, fix the arguments and call it again.
 - Answer in at most three short sentences: it may be shown on a small screen.
 """
@@ -43,6 +51,8 @@ REWRITE_PROMPT = (
 )
 MAX_ROUNDS = 6
 MAX_REWRITES = 1
+# Tools whose result is a plan a device can act on, and the kind of plan.
+PLAN_TOOLS = {"plan_charge": "charge", "plan_compute_job": "compute"}
 
 
 @dataclass
@@ -56,7 +66,8 @@ class AgentRun:
     factcheck: dict | None = None
     models: list[str] = field(default_factory=list)  # model used for each model call, in order
     tool_calls: list[dict] = field(default_factory=list)
-    plan: dict | None = None  # the last plan_charge result, if any
+    plan: dict | None = None  # the last plan_charge or plan_compute_job result, if any
+    kind: str = "charge"  # "charge" (a household load) or "compute" (a compute job)
     # That plan's charging windows as exact times (UTC ISO), for a device to act on.
     schedule: list[dict] = field(default_factory=list)
     # The job behind that plan (energy, power, earliest, deadline as UTC ISO), so the watcher
@@ -78,10 +89,11 @@ def run_agent(
     client: ChatClient,
     mode: str = "replay",
     max_rounds: int = MAX_ROUNDS,
+    carbon: Callable[[], CarbonForecast] | None = None,
 ) -> AgentRun:
     start = time.monotonic()
     run = AgentRun(question=question, as_of=now.isoformat(), mode=mode)
-    toolbox = Toolbox(data, now)
+    toolbox = Toolbox(data, now, carbon)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"{question}\n\n(It is now {uk_label(now, True)} UK time.)"},
@@ -128,19 +140,33 @@ def run_agent(
         run.failed_models += exc.failed
 
     run.tool_calls = toolbox.calls
-    plans = [c["result"] for c in toolbox.calls if c["name"] == "plan_charge"]
-    run.plan = next((p for p in reversed(plans) if "error" not in p), None)
-    if run.plan is not None and toolbox.last_plan is not None:
-        run.schedule = [
-            {
-                "start": b["start"].isoformat(),
-                "end": b["end"].isoformat(),
-                "energy_kwh": round(b["energy_kwh"], 3),
-            }
-            for b in blocks(toolbox.last_plan.slots)
-        ]
-        job = toolbox.last_plan.job
+    plans = [c for c in toolbox.calls if c["name"] in PLAN_TOOLS and "error" not in c["result"]]
+    if plans:
+        run.plan = plans[-1]["result"]
+        run.kind = PLAN_TOOLS[plans[-1]["name"]]
+    if run.plan is not None and run.kind == "charge" and toolbox.last_plan is not None:
+        plan = toolbox.last_plan
+        run.schedule = schedule(plan.slots)
         run.job = {
+            "kind": "charge",
+            "goal": run.plan.get("goal", "wind"),
+            "energy_kwh": plan.job.energy_kwh,
+            "power_kw": plan.job.power_kw,
+            "earliest": plan.job.earliest.isoformat(),
+            "deadline": plan.job.deadline.isoformat(),
+            "interruptible": plan.job.interruptible,
+        }
+    compute = toolbox.last_compute
+    if run.plan is not None and run.kind == "compute" and compute and run.plan.get("feasible"):
+        job = compute.job
+        run.schedule = schedule(compute.best.slots)
+        run.job = {
+            "kind": "compute",
+            "region_id": compute.best.region_id,
+            "regions": [s.region_id for s in compute.sites],
+            "baseline_region_id": compute.baseline.region_id,
+            "gpus": job.gpus,
+            "hours": job.hours,
             "energy_kwh": job.energy_kwh,
             "power_kw": job.power_kw,
             "earliest": job.earliest.isoformat(),
@@ -149,3 +175,15 @@ def run_agent(
         }
     run.seconds = round(time.monotonic() - start, 2)
     return run
+
+
+def schedule(slots: pd.DataFrame) -> list[dict]:
+    """A plan's "on" windows as exact times (UTC ISO), for a device to act on."""
+    return [
+        {
+            "start": b["start"].isoformat(),
+            "end": b["end"].isoformat(),
+            "energy_kwh": round(b["energy_kwh"], 3),
+        }
+        for b in blocks(slots)
+    ]

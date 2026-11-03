@@ -2,7 +2,7 @@
 
 import pandas as pd
 import pytest
-from wind_fixtures import NOW, synthetic_wind
+from wind_fixtures import NOW, synthetic_carbon, synthetic_wind
 
 from wind_monitor.agent.tools import TOOLS, Toolbox, parse_moment, uk_label
 
@@ -12,12 +12,24 @@ def toolbox() -> Toolbox:
     return Toolbox(synthetic_wind(), NOW)
 
 
-def test_tool_definitions_match_the_toolbox(toolbox):
+@pytest.fixture
+def green() -> Toolbox:
+    """With the synthetic carbon forecast too."""
+    return Toolbox(synthetic_wind(), NOW, carbon=synthetic_carbon)
+
+
+def test_tool_definitions_match_the_toolbox(green):
     names = {t["function"]["name"] for t in TOOLS}
-    assert names == {"get_wind_outlook", "plan_charge", "check_recent_wind"}
+    assert names == {
+        "get_wind_outlook",
+        "plan_charge",
+        "check_recent_wind",
+        "get_carbon_outlook",
+        "plan_compute_job",
+    }
+    args = {"plan_charge": {"energy_kwh": 7, "power_kw": 7}, "plan_compute_job": {"hours": 2}}
     for name in names:
-        args = {"energy_kwh": 7, "power_kw": 7} if name == "plan_charge" else {}
-        assert "error" not in toolbox.run(name, args)
+        assert "error" not in green.run(name, args.get(name, {}))
 
 
 def test_uk_labels_and_moments():
@@ -98,3 +110,71 @@ def test_recent_wind_verdicts():
 def test_recent_wind_with_no_actuals_yet():
     early = Toolbox(synthetic_wind(), pd.Timestamp("2026-01-01T00:30Z"))
     assert early.run("check_recent_wind", {})["hours_compared"] == 0
+
+
+def test_a_wind_plan_also_states_its_carbon(green):
+    plan = green.run("plan_charge", {"energy_kwh": 14, "power_kw": 7})
+    assert plan["charge_windows"] == [{"from": "Fri 02:00", "to": "Fri 04:00", "kwh": 14.0}]
+    assert plan["grid_carbon_while_charging_g_per_kwh"] == 100
+    assert plan["grid_carbon_if_charged_straight_away_g_per_kwh"] == 200
+    assert plan["less_carbon_than_charging_straight_away_pct"] == 50.0
+    assert plan["kg_co2"] == 1.4
+    assert green.last_kind == "charge"
+
+
+def test_a_carbon_plan_takes_the_cleanest_half_hours(green):
+    plan = green.run("plan_charge", {"energy_kwh": 14, "power_kw": 7, "goal": "carbon"})
+    assert plan["goal"] == "carbon"
+    assert [w["from"] for w in plan["charge_windows"]] == ["Fri 02:00", "Fri 04:00"]
+    assert plan["grid_carbon_while_charging_g_per_kwh"] == 80
+    assert plan["less_carbon_than_charging_straight_away_pct"] == 60.0
+
+
+def test_without_a_carbon_forecast_wind_plans_still_work(toolbox):
+    plan = toolbox.run("plan_charge", {"energy_kwh": 7, "power_kw": 7})
+    assert "kg_co2" not in plan and plan["feasible"]
+    assert (
+        "carbon"
+        in toolbox.run("plan_charge", {"energy_kwh": 7, "power_kw": 7, "goal": "carbon"})["error"]
+    )
+    assert "carbon" in toolbox.run("plan_compute_job", {"hours": 2})["error"]
+
+
+def test_carbon_outlook(green):
+    out = green.run("get_carbon_outlook", {"hours": 12, "region": "London"})
+    assert out["gb_now_g_per_kwh"] == 200 and len(out["gb_hours"]) == 12
+    assert out["gb_cleanest_hour"] == {"time": "Fri 04:00", "g_per_kwh": 60}
+    ranked = out["regions_now_cleanest_first"]
+    assert ranked[0] == {"region": "North Scotland", "g_per_kwh": 10, "wind_pct": 90}
+    assert out["cleanest_region_now"] == "North Scotland"
+    assert out["dirtiest_region_now"] == "South East England"  # 240 g
+    assert {"time": "Fri 03:00", "g_per_kwh": 150} in out["region_hours"]
+
+
+def test_compute_job_goes_where_and_when_the_grid_is_cleanest(green):
+    out = green.run("plan_compute_job", {"gpu_hours": 16})
+    assert out["feasible"] and out["gpus"] == 8 and out["run_hours"] == 2.0
+    assert out["power_kw"] == 10.4 and out["energy_kwh"] == 20.8
+    assert out["deadline"] == "Fri 18:00"  # default: 24 hours
+    assert out["best"] == {
+        "region": "North Scotland",
+        "run_windows": [{"from": "Fri 01:00", "to": "Fri 03:00"}],
+        "average_g_per_kwh": 0,
+        "kg_co2": 0.0,
+    }
+    assert out["baseline"]["region"] == "London" and out["baseline"]["kg_co2"] == 4.58
+    assert out["pct_less_co2_than_baseline"] == 100.0 and out["kg_co2_saved"] == 4.58
+    assert out["only_moving_in_time"]["pct_less_co2_than_baseline"] == 15.9
+    assert out["only_moving_in_place"]["pct_less_co2_than_baseline"] == 95.5
+    assert out["regions_least_co2_first"][0]["region"] == "North Scotland"
+    assert green.last_kind == "compute" and green.last_compute.best.region == "North Scotland"
+
+
+def test_compute_job_errors(green):
+    assert "hours" in green.run("plan_compute_job", {"gpus": 8})["error"]
+    assert (
+        "Unknown region"
+        in green.run("plan_compute_job", {"hours": 2, "regions": ["Mars"]})["error"]
+    )
+    late = green.run("plan_compute_job", {"hours": 30, "deadline": "22:00"})
+    assert late["feasible"] is False and "why_not" in late
