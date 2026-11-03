@@ -9,10 +9,27 @@ import { AccuracyView } from './views/AccuracyView'
 import { AgentView } from './views/AgentView'
 import { DayView } from './views/DayView'
 
-const TABS: { view: View; label: string }[] = [
-  { view: 'agent', label: 'Agent & device' },
-  { view: 'day', label: 'Day-ahead view' },
-  { view: 'accuracy', label: 'Forecast accuracy' },
+const TABS: { view: View; label: string; title: string; intro: string }[] = [
+  {
+    view: 'agent',
+    label: 'Live',
+    title: 'Live console',
+    intro:
+      "Muse Spark plans flexible demand into the windiest hours. Every figure is fact-checked before a plan reaches the board, where it waits for a button press.",
+  },
+  {
+    view: 'day',
+    label: 'Day-ahead',
+    title: 'What the desk knew',
+    intro:
+      'The latest wind forecast published before the day-ahead auction closed, with its likely range and what actually blew.',
+  },
+  {
+    view: 'accuracy',
+    label: 'Accuracy',
+    title: 'How far to trust the forecast',
+    intro: 'January 2026, scored at decision time: how big the misses were, which way they leaned, and when.',
+  },
 ]
 
 export default function App() {
@@ -38,24 +55,30 @@ export default function App() {
   // Malformed or out-of-scope URL values fall back to the defaults.
   const { date, cutoff } = resolveSelection(url, m)
 
+  const tab = TABS.find((t) => t.view === url.view) ?? TABS[0]
+
   return (
     <Shell
       tabs={
         <div className="tabs" role="tablist">
-          {TABS.map((tab) => (
+          {TABS.map((t) => (
             <button
-              key={tab.view}
+              key={t.view}
               role="tab"
-              aria-selected={url.view === tab.view}
-              onClick={() => setUrl({ view: tab.view })}
+              aria-selected={url.view === t.view}
+              onClick={() => setUrl({ view: t.view })}
             >
-              {tab.label}
+              {t.label}
             </button>
           ))}
         </div>
       }
       footer={<DataFooter meta={m} />}
     >
+      <div className="page-head">
+        <h1>{tab.title}</h1>
+        <p>{tab.intro}</p>
+      </div>
       {url.view === 'agent' ? (
         <AgentView />
       ) : (
@@ -89,17 +112,20 @@ export default function App() {
 function Shell(props: { children: ReactNode; tabs?: ReactNode; footer?: ReactNode }) {
   return (
     <div className="app">
-      <header className="header">
-        <div className="brand">
-          <img src="/favicon.svg" alt="" />
-          <div>
-            <h1>Wind Forecast Monitor</h1>
-            <p>GB wind generation · an agent that plans flexible demand around it · Meta Muse models</p>
-          </div>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <a className="logo" href="/">
+            <img src="/favicon.svg" alt="" />
+            Wind Buddy
+          </a>
+          <span className="topbar-page">Console</span>
+          {props.tabs}
+          <a className="topbar-link" href="/">
+            About
+          </a>
         </div>
-        {props.tabs}
       </header>
-      <main>{props.children}</main>
+      <main className="main">{props.children}</main>
       {props.footer}
     </div>
   )

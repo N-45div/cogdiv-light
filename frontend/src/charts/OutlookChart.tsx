@@ -58,7 +58,7 @@ export function OutlookChart(props: { outlook: OutlookView }) {
           />
           <Line
             dataKey="forecast"
-            stroke="var(--series-forecast)"
+            stroke="var(--series-official)"
             strokeWidth={2}
             dot={false}
             connectNulls
@@ -66,9 +66,8 @@ export function OutlookChart(props: { outlook: OutlookView }) {
           />
           <Line
             dataKey="expected"
-            stroke="var(--series-forecast)"
-            strokeWidth={2}
-            strokeDasharray="5 4"
+            stroke="var(--series-expected)"
+            strokeWidth={3}
             dot={false}
             connectNulls
             isAnimationActive={false}

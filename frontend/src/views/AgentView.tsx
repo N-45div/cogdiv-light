@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   api,
   type AgentRun,
@@ -18,8 +18,9 @@ import {
   planWindows,
   saveToken,
 } from '../lib/agent'
-import { formatMW, formatUkDateTime } from '../lib/format'
-import { useLoad, usePolling } from '../lib/hooks'
+import { conversation, latestDevice } from '../lib/conversation'
+import { formatMW, formatUkDateTime, formatUkTime } from '../lib/format'
+import { useLoad, useNow, usePolling } from '../lib/hooks'
 
 const POLL_MS = 5000
 const DEFAULT_QUESTION = 'My EV needs 21 kWh at 7 kW, ready by 07:00. When should it charge?'
@@ -37,35 +38,30 @@ export function AgentView() {
 
   return (
     <div>
-      <p className="context">
-        An agent on <strong>Meta's Muse Spark</strong> plans flexible demand (an EV charge) into
-        the windiest hours, using the forecast corrected for its track record. Every figure in its
-        answer is <strong>fact-checked</strong> against what its tools returned before a plan can
-        reach the device, where it is approved with the button. A watcher re-checks approved plans
-        every 30 minutes.
-      </p>
-
       <StatusTiles clock={clock.data} outlook={outlook.data} devices={devices.data} />
 
-      <Card
-        title="Wind outlook"
-        subtitle={outlook.data?.band_note}
-        foot={
-          outlook.data &&
-          `Newest forecast published ${
-            outlook.data.latest_run ? formatUkDateTime(outlook.data.latest_run) : 'n/a'
-          } · ${outlook.data.data_source} data · UK time`
-        }
-      >
-        <div className="legend">
-          <LegendItem color="var(--series-actual)" label="Actual" />
-          <LegendItem color="var(--series-forecast)" label="Forecast" />
-          <LegendItem color="var(--series-forecast)" label="Expected (corrected)" dashed />
-          <LegendItem color="var(--band)" label="Likely range (80%)" area />
-        </div>
-        {outlook.error && <Notice error>Could not load the outlook: {outlook.error}</Notice>}
-        {outlook.data ? <OutlookChart outlook={outlook.data} /> : <Notice>Loading the outlook…</Notice>}
-      </Card>
+      <div className="grid-main">
+        <Card
+          title="Wind outlook"
+          subtitle={outlook.data?.band_note}
+          foot={
+            outlook.data &&
+            `Newest forecast published ${
+              outlook.data.latest_run ? formatUkDateTime(outlook.data.latest_run) : 'n/a'
+            } · ${outlook.data.data_source} data · UK time`
+          }
+        >
+          <div className="legend">
+            <LegendItem color="var(--series-actual)" label="Actual" />
+            <LegendItem color="var(--series-official)" label="Official forecast" />
+            <LegendItem color="var(--series-expected)" label="Expected, after correction" />
+            <LegendItem color="var(--band)" label="Likely range (80%)" area />
+          </div>
+          {outlook.error && <Notice error>Could not load the outlook: {outlook.error}</Notice>}
+          {outlook.data ? <OutlookChart outlook={outlook.data} /> : <Notice>Loading the outlook…</Notice>}
+        </Card>
+        <ConversationCard devices={devices.data} />
+      </div>
 
       <div className="grid-2">
         <AskCard token={token} />
@@ -90,7 +86,7 @@ function StatusTiles(props: {
   const { clock, outlook, devices } = props
   const share = outlook?.history.by_lead.find((b) => b.lead_bucket === '0-6h')?.actual_share_pct
   const next = outlook?.points.find((p) => p.expected_mw !== null)
-  const device = devices?.[0]
+  const device = latestDevice(devices)
   return (
     <div className="tiles">
       <StatTile
@@ -130,6 +126,60 @@ function StatusTiles(props: {
         }
       />
     </div>
+  )
+}
+
+const ONLINE_MS = 2 * 60_000
+
+/** What the board heard and said, as a chat: the voice loop, seen from the web. */
+function ConversationCard(props: { devices?: DeviceSummary[] }) {
+  const device = latestDevice(props.devices)
+  const turns = device ? conversation(device.events) : []
+  const now = useNow(POLL_MS)
+  const online = device?.last_seen ? now - Date.parse(device.last_seen) < ONLINE_MS : false
+  const chat = useRef<HTMLDivElement>(null)
+  const newest = device?.events[0]?.at ?? ''
+
+  // Keep the newest line in view as the conversation grows.
+  useEffect(() => {
+    if (chat.current) chat.current.scrollTop = chat.current.scrollHeight
+  }, [newest, turns.length])
+
+  return (
+    <section className="card convo">
+      <div className="card-head">
+        <div>
+          <h2>Talking to {device?.device_id ?? 'the board'}</h2>
+          <p>What the board heard and said</p>
+        </div>
+        {device && (
+          <span className={online ? 'status-pill good' : 'status-pill'}>
+            <span className={online ? 'dot' : 'dot off'} /> {online ? 'online' : 'offline'}
+          </span>
+        )}
+      </div>
+      <div className="convo-chat" ref={chat} aria-live="polite">
+        {turns.length === 0 && (
+          <p className="convo-empty">
+            Nothing said yet. Hold the board's button and ask: “When should I charge 20 kWh by 7 am?”
+          </p>
+        )}
+        {turns.map((t, i) =>
+          t.kind === 'note' ? (
+            <div key={`${t.at}-${i}`} className={`convo-note ${t.tone}`}>
+              {t.text} <time>{formatUkTime(t.at)}</time>
+            </div>
+          ) : (
+            <div key={`${t.at}-${i}`} className={`convo-bubble ${t.kind}`}>
+              <span className="convo-who">
+                {t.kind === 'you' ? 'You' : 'Wind Buddy'} · {formatUkTime(t.at)}
+              </span>
+              {t.text}
+            </div>
+          ),
+        )}
+      </div>
+    </section>
   )
 }
 
