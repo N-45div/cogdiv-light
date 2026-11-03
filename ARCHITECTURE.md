@@ -19,7 +19,7 @@ each one.
 ## 1. The system
 
 ```mermaid
-flowchart LR
+flowchart TB
     person((Person))
     subgraph board["Board: ESP32-S3"]
         mic[Mic] ~~~ spk[Speaker] ~~~ screen[Screen] ~~~ button[BOOT button] ~~~ relay[Relay]
@@ -249,7 +249,7 @@ sequenceDiagram
     else a question
         S->>M: agent loop with tools
         M-->>S: answer
-        S->>S: fact check; propose a verified, feasible plan
+        S->>S: fact check, then propose a verified, feasible plan
     end
     B->>S: next poll
     S->>T: the plan in one or two sentences
