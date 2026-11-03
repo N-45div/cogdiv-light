@@ -15,6 +15,7 @@ from .api import router
 from .carbon_api import router as carbon_router
 from .config import Settings
 from .device_api import router as device_router
+from .persist import Persistence
 from .planning_api import router as planning_router
 from .store import DataUnavailableError
 from .watch_api import router as watch_router
@@ -35,11 +36,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Boards, plans and the run log survive restarts when STATE_FILE is set.
+        keeper = Persistence(settings.state_file) if settings.state_file else None
+        tasks = []
+        if keeper:
+            await asyncio.to_thread(keeper.load)
+            tasks.append(asyncio.create_task(keeper.loop()))
         # The watcher re-checks approved plans in the background (WATCH=0 turns it off).
-        task = asyncio.create_task(watch_loop()) if settings.watch else None
+        if settings.watch:
+            tasks.append(asyncio.create_task(watch_loop()))
         yield
-        if task:
+        for task in tasks:
             task.cancel()
+        if keeper:
+            await asyncio.to_thread(keeper.save, True)
 
     app = FastAPI(
         lifespan=lifespan,

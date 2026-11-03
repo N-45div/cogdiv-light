@@ -84,6 +84,8 @@ class Settings:
     replay_speed: float = 0.0
     # Run the watcher in the background (re-checks approved plans every 30 clock-minutes).
     watch: bool = True
+    # Where to keep devices, plans and the run log across restarts (unset: memory only).
+    state_file: Path | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -99,6 +101,7 @@ class Settings:
             replay_start=_moment(os.environ.get("REPLAY_START"), DEFAULT_REPLAY_START),
             replay_speed=float(os.environ.get("REPLAY_SPEED", "0")),
             watch=os.environ.get("WATCH", "1").lower() not in ("0", "false", "no"),
+            state_file=Path(os.environ["STATE_FILE"]) if os.environ.get("STATE_FILE") else None,
         )
 
 

@@ -18,6 +18,7 @@ import json
 import os
 import re
 import threading
+import time
 import wave
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -258,7 +259,9 @@ class Voice:
         self.transcriber = transcriber
         self.synthesizer = synthesizer
         self._clips: OrderedDict[int, Clip] = OrderedDict()
-        self._next_id = 1
+        # Ids keep rising across restarts (they start from the clock), so a board never mistakes
+        # a new clip for one it has already played.
+        self._next_id = int(time.time())
         self._lock = threading.Lock()
 
     def can_speak(self) -> bool:

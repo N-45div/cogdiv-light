@@ -3,9 +3,13 @@
     modal deploy deploy/modal_app.py            # from the repo root
 
 Runs as exactly ONE always-on container: the device registry, the agent's run log and the
-replay clock live in memory, so every request must reach the same process. The app's keys come
-from the Modal secret "wind-buddy" (MODEL_API_KEY, BASETEN_API_KEY, DEVICE_TOKENS, APP_TOKEN,
-CLOCK_MODE), which the GitHub deploy workflow writes from the repository's secrets.
+replay clock live in memory, so every request must reach the same process. A snapshot of that
+memory is kept on the Modal Volume "wind-buddy-state" (STATE_FILE), so a restart or redeploy
+picks up where it left off; Modal commits the volume every few seconds and at shutdown.
+
+The app's keys come from the Modal secret "wind-buddy" (MODEL_API_KEY, BASETEN_API_KEY,
+DEVICE_TOKENS, APP_TOKEN, CLOCK_MODE), which the GitHub deploy workflow writes from the
+repository's secrets.
 """
 
 from pathlib import Path
@@ -40,6 +44,7 @@ image = (
             "STATIC_DIR": "/app/static",
             "FIRMWARE_DIR": "/app/firmware",
             "PIPER_VOICE": f"/app/voices/{VOICE}",
+            "STATE_FILE": "/state/server.pkl",
             "PYTHONPATH": "/app",
         }
     )
@@ -51,10 +56,12 @@ if SITE.is_dir():
     image = image.add_local_dir(SITE, "/app/static")
 
 app = modal.App("wind-buddy", image=image)
+state = modal.Volume.from_name("wind-buddy-state", create_if_missing=True)
 
 
 @app.function(
     secrets=[modal.Secret.from_name("wind-buddy")],
+    volumes={"/state": state},
     min_containers=1,  # always warm: the device polls every few seconds
     max_containers=1,  # one process, one shared state
     timeout=180,  # an agent answer takes ~5 s; leave room for slow models
