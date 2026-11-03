@@ -848,3 +848,270 @@ summary {
     padding: 20px 16px 40px;
   }
 }
+
+/* ---- grid & compute ---- */
+
+.brief {
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  border-left: 4px solid var(--brand);
+}
+
+.brief-label {
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+
+.brief-text {
+  margin: 6px 0 10px;
+  font-size: 1.15rem;
+  line-height: 1.45;
+  max-width: 70ch;
+}
+
+.heatmap {
+  position: relative;
+}
+
+.heatmap-scroll {
+  position: relative;
+  overflow-x: auto;
+}
+
+.heatmap svg {
+  display: block;
+  width: 100%;
+  min-width: 720px;
+  height: auto;
+}
+
+.hm-label {
+  font-size: 12px;
+  fill: var(--text-secondary);
+}
+
+.hm-label.best {
+  fill: var(--text-primary);
+  font-weight: 700;
+}
+
+.hm-tick {
+  font-size: 11px;
+  fill: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hm-cell:hover {
+  stroke: var(--text-primary);
+  stroke-width: 1.5;
+}
+
+.hm-cell.empty {
+  stroke: var(--grid);
+}
+
+.hm-run {
+  fill: none;
+  stroke: var(--brand);
+  stroke-width: 2.5;
+  pointer-events: none;
+}
+
+.hm-tooltip {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 6px));
+  pointer-events: none;
+  z-index: 2;
+  min-width: 190px;
+}
+
+.hm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.hm-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hm-legend i {
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}
+
+.hm-legend-run i {
+  background: transparent;
+  border: 2.5px solid var(--brand);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  padding-top: 18px;
+}
+
+.compute-result {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.compute-headline {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+  line-height: 1.4;
+}
+
+.compute-figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.compute-figures div {
+  padding: 10px 12px;
+  border-radius: var(--radius-small);
+  background: var(--surface-sunken);
+}
+
+.compute-figures b {
+  display: block;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.compute-figures span {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.hbars {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.hbars li {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(0, 2fr) 64px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.hbar-label {
+  color: var(--text-secondary);
+}
+
+.hbar-track {
+  height: 14px;
+}
+
+.hbar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--series-official);
+}
+
+.hbars li.us .hbar {
+  background: var(--brand);
+}
+
+.hbars li.us .hbar-label,
+.hbars li.us .hbar-value {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.hbar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-wrap.short {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+table.data tr.best td {
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .compute-figures {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .hbars li {
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+  .hbar-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+.form .check input {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--brand);
+}
+
+.saving-note {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.chip.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}

@@ -8,6 +8,7 @@ import { resolveSelection } from './lib/selection'
 import { AccuracyView } from './views/AccuracyView'
 import { AgentView } from './views/AgentView'
 import { DayView } from './views/DayView'
+import { GridView } from './views/GridView'
 
 const TABS: { view: View; label: string; title: string; intro: string }[] = [
   {
@@ -16,6 +17,13 @@ const TABS: { view: View; label: string; title: string; intro: string }[] = [
     title: 'Live console',
     intro:
       "Muse Spark plans flexible demand into the windiest hours. Every figure is fact-checked before a plan reaches the board, where it waits for a button press.",
+  },
+  {
+    view: 'grid',
+    label: 'Grid & compute',
+    title: 'Where and when the grid is cleanest',
+    intro:
+      "NESO's carbon forecast for Britain's 14 regions, half-hour by half-hour. Work that can wait or move, from an EV charge to a GPU training run, can follow the wind to the cleanest hours and places.",
   },
   {
     view: 'day',
@@ -81,6 +89,8 @@ export default function App() {
       </div>
       {url.view === 'agent' ? (
         <AgentView />
+      ) : url.view === 'grid' ? (
+        <GridView />
       ) : (
         <>
           <div className="controls">

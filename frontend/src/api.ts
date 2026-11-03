@@ -198,6 +198,7 @@ export interface AgentRun {
   models: string[]
   tool_calls: ToolCall[]
   plan: Record<string, unknown> | null
+  kind?: 'charge' | 'compute'
   schedule: { start: string; end: string; energy_kwh: number }[]
   rewrites: number
   seconds: number
@@ -242,6 +243,76 @@ export interface WatchFinding {
   note_check: string | null
   model: string | null
   proposal_id: string | null
+}
+
+// ---- carbon intensity and compute jobs ----
+
+export interface CarbonRegion {
+  id: number
+  name: string
+  now_g: number | null // g CO2/kWh in the current half-hour
+  index: string | null // NESO's band: very low .. very high
+  mix: Record<string, number> // forecast generation mix now, % by fuel
+  g: (number | null)[] // one per CarbonView.times
+}
+
+export interface CarbonView {
+  as_of: string
+  fetched_at: string
+  source: string
+  times: string[] // half-hour starts, UTC
+  national: (number | null)[]
+  gb_now_g: number | null
+  regions: CarbonRegion[] // cleanest first right now
+}
+
+export interface ComputeRequest {
+  gpus: number
+  hours: number
+  earliest?: string
+  deadline?: string
+  interruptible: boolean
+  regions?: number[]
+  baseline?: number
+}
+
+export interface SitePlan {
+  region_id: number
+  region: string
+  feasible: boolean
+  windows: { start: string; end: string; energy_kwh: number }[]
+  average_g: number | null
+  kg_co2: number | null
+}
+
+export interface ComputePlan {
+  as_of: string
+  job: {
+    gpus: number
+    hours: number
+    kw_per_gpu: number
+    power_kw: number
+    energy_kwh: number
+    earliest: string
+    deadline: string
+    interruptible: boolean
+  }
+  feasible: boolean
+  best: SitePlan | null
+  baseline: SitePlan // London, started straight away
+  time_only: SitePlan // London at its cleanest time
+  place_only: SitePlan | null // the best region, started straight away
+  pct_less_co2: number | null
+  kg_co2_saved: number | null
+  sites: SitePlan[]
+}
+
+export interface GridBrief {
+  at: string
+  text: string
+  by: string // model, or "code"
+  check: string
+  facts: Record<string, unknown>
 }
 
 export class ApiError extends Error {}
@@ -292,4 +363,7 @@ export const api = {
   setClock: (update: ClockUpdate, appToken: string) =>
     postJson<ClockState>('/api/clock', update, appToken),
   runWatch: (appToken: string) => postJson<WatchFinding[]>('/api/watch/run', {}, appToken),
+  carbon: (hours = 24) => getJson<CarbonView>('/api/carbon', { hours: String(hours) }),
+  brief: () => getJson<GridBrief>('/api/brief'),
+  computePlan: (request: ComputeRequest) => postJson<ComputePlan>('/api/compute/plan', request, ''),
 }

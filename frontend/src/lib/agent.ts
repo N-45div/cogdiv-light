@@ -30,8 +30,13 @@ export function outlookRows(outlook: OutlookView): OutlookRow[] {
   return [...rows.values()].sort((a, b) => a.t - b.t)
 }
 
-/** "Fri 02:00 to Fri 04:00, 14 kWh" for each charging window in an agent's plan. */
+/** "Fri 02:00 to Fri 04:00, 14 kWh" for each charging window in an agent's plan, or
+ * "Fri 01:00 to Fri 03:00 in North Scotland" for each run window of a compute job. */
 export function planWindows(run: Pick<AgentRun, 'plan'>): string[] {
+  const best = run.plan?.best as { region?: string; run_windows?: { from?: string; to?: string }[] } | undefined
+  if (best && Array.isArray(best.run_windows)) {
+    return best.run_windows.map((w) => `${w.from ?? '?'} to ${w.to ?? '?'} in ${best.region ?? '?'}`)
+  }
   const windows = run.plan?.charge_windows
   if (!Array.isArray(windows)) return []
   return windows.map((w: { from?: string; to?: string; kwh?: number }) => {

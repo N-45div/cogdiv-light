@@ -54,7 +54,7 @@ export function usePolling<T>(load: () => Promise<T>, key: string, everyMs: numb
   return useLoad(load, `${key}#${tick}`)
 }
 
-export type View = 'day' | 'accuracy' | 'agent'
+export type View = 'day' | 'accuracy' | 'agent' | 'grid'
 
 export interface UrlState {
   view: View
@@ -66,7 +66,7 @@ function readUrl(): UrlState {
   const params = new URLSearchParams(window.location.search)
   return {
     // The agent tab is the front page; the January study views are one click away.
-    view: (['day', 'accuracy'] as const).find((v) => v === params.get('view')) ?? 'agent',
+    view: (['day', 'accuracy', 'grid'] as const).find((v) => v === params.get('view')) ?? 'agent',
     date: params.get('date'),
     cutoff: params.get('cutoff'),
   }

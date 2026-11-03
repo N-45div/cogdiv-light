@@ -24,6 +24,12 @@ import { useLoad, useNow, usePolling } from '../lib/hooks'
 
 const POLL_MS = 5000
 const DEFAULT_QUESTION = 'My EV needs 21 kWh at 7 kW, ready by 07:00. When should it charge?'
+const EXAMPLES: [string, string][] = [
+  ['EV charge', DEFAULT_QUESTION],
+  ['Cleanest charge', 'Charge 14 kWh at 7 kW by 07:00, at the lowest carbon.'],
+  ['AI compute job', 'I need to run 64 GPUs for 6 hours, done within 24 hours. Where and when is cleanest?'],
+  ['Grid now', 'Where in Britain is the grid cleanest right now, and when is it cleanest tonight?'],
+]
 
 /** Live planning: the outlook, the agent and its fact checks, the devices, and the watcher. */
 export function AgentView() {
@@ -205,6 +211,18 @@ function AskCard(props: { token: string }) {
   return (
     <Card title="Ask the agent" subtitle="Muse Spark plans with the tools; every figure is checked.">
       <div className="form">
+        <div className="chips" role="group" aria-label="Example questions">
+          {EXAMPLES.map(([label, text]) => (
+            <button
+              key={label}
+              className={question === text ? 'chip on' : 'chip'}
+              onClick={() => setQuestion(text)}
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <textarea
           rows={3}
           value={question}
