@@ -543,12 +543,10 @@ void onHold() {
   nextTelemetryMs = 0;
   if (view.mode == "proposal") {
     sendEvent("approve", view.proposalId);
-  } else if (view.mode == "waiting" || view.mode == "charging") {
-    sendEvent("stop");
-  }
+  }  // elsewhere a hold is push-to-talk ("stop charging" is said, not pressed)
 }
 
-bool canTalk() { return view.mode == "idle" || view.mode == "done"; }
+bool canTalk() { return view.mode != "proposal" && view.mode != "test"; }
 
 void readButton() {
   bool down = digitalRead(PIN_BUTTON) == LOW;
@@ -580,7 +578,7 @@ void readButton() {
   } else if (!down && pressed) {
     pressed = false;
     if (talking) {
-      finishTalking();
+      releaseTalking();
     } else if (!holdFired && now - pressedAt <= TAP_MAX_MS) {
       onTap();
     }

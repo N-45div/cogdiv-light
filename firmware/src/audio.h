@@ -13,13 +13,17 @@
 
 static const int MIC_RATE = 16000;
 static const uint32_t MAX_TALK_MS = 8000;
-static const uint32_t TALK_AFTER_MS = 350;  // hold this long in idle to start talking
+static const uint32_t TALK_AFTER_MS = 350;   // hold this long to start talking
+static const uint32_t HANDS_FREE_MS = 900;   // released sooner: keep listening until quiet
+static const uint32_t QUIET_END_MS = 1200;   // hands-free: this much quiet after speech ends it
+static const uint32_t NO_SPEECH_MS = 4500;   // hands-free: give up if nobody speaks
 static const float VOLUME = 0.5f;
 static const size_t TALK_MAX_SAMPLES = MIC_RATE * MAX_TALK_MS / 1000;
 
 bool speakerReady = false, micReady = false;
-bool talking = false, talkedThisPress = false;
-uint32_t talkStartMs = 0;
+bool talking = false, talkedThisPress = false, handsFree = false, heardSpeech = false;
+uint32_t talkStartMs = 0, lastLoudMs = 0;
+int32_t noiseLevel = 0, peakLevel = 0;
 int16_t *talkBuf = nullptr;
 size_t talkSamples = 0;
 int lastSayId = -2;  // -2: no poll yet (don't replay old speech after a restart)
@@ -118,7 +122,109 @@ size_t readFully(WiFiClient *s, uint8_t *dst, size_t want, uint32_t timeoutMs = 
   return have;
 }
 
+// IMA ADPCM (the server's compact speech format, see backend/wind_monitor/voice.py).
+static const int16_t ADPCM_STEPS[89] = {
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66,
+    73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408,
+    449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
+    2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630,
+    9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794,
+    32767};
+static const int8_t ADPCM_INDEX[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
+
+struct Adpcm {
+  int32_t predictor = 0;
+  int index = 0;
+  int16_t next(uint8_t code) {
+    int step = ADPCM_STEPS[index];
+    int delta = step >> 3;
+    if (code & 4) delta += step;
+    if (code & 2) delta += step >> 1;
+    if (code & 1) delta += step >> 2;
+    predictor += (code & 8) ? -delta : delta;
+    predictor = constrain(predictor, -32768, 32767);
+    index = constrain(index + ADPCM_INDEX[code], 0, 88);
+    return (int16_t)predictor;
+  }
+};
+
+// Plays the server's compact speech as it downloads: about 8 KB per second of speech, so the
+// download keeps ahead of the speaker after a short head start.
 bool playSpeech(const String &path) {
+  if (!speakerReady) return false;
+  HTTPClient http;
+  WiFiClientSecure secure;
+  WiFiClient plain;
+  beginHttp(http, secure, plain, settings.server + path + "?format=adpcm");
+  http.setTimeout(15000);
+  uint32_t started = millis();
+  int code = http.GET();
+  int size = http.getSize();
+  if (code != 200 || size <= 12 || size > 2 * 1024 * 1024) {
+    logLine("speech %s -> HTTP %d, %d bytes", path.c_str(), code, size);
+    http.end();
+    return false;
+  }
+  uint8_t *data = (uint8_t *)ps_malloc(size);
+  if (!data) {
+    logLine("speech: out of memory");
+    http.end();
+    return false;
+  }
+  WiFiClient *s = http.getStreamPtr();
+  size_t have = 0, used = 12;
+  uint32_t lastData = millis();
+  auto pull = [&]() {  // take whatever has arrived, without waiting
+    int avail = s->available();
+    if (avail > 0) {
+      int got = s->read(data + have, min((size_t)avail, (size_t)size - have));
+      lastData = millis();
+    }
+  };
+  // Head start: the header plus about 0.75 s of speech (or the whole clip if shorter).
+  while (have < min((size_t)size, (size_t)(12 + 6000)) && millis() - lastData < 5000) {
+    pull();
+    if (s->available() <= 0) delay(2);
+  }
+  if (have < 12 || memcmp(data, "WBA1", 4)) {
+    logLine("speech: not compact audio");
+    free(data);
+    http.end();
+    return false;
+  }
+  uint32_t rate = data[4] | (data[5] << 8) | (data[6] << 16) | ((uint32_t)data[7] << 24);
+  uint32_t total = data[8] | (data[9] << 8) | (data[10] << 16) | ((uint32_t)data[11] << 24);
+  i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+  Adpcm decoder;
+  int16_t pcm[512];
+  uint32_t played = 0, underruns = 0;
+  while (played < total) {
+    pull();
+    if (used >= have) {  // speaker caught up with the download: wait for more
+      if (have >= (size_t)size || millis() - lastData > 5000) break;
+      underruns++;
+      delay(5);
+      continue;
+    }
+    size_t bytes = min(have - used, (size_t)256);
+    size_t n = 0;
+    for (size_t i = 0; i < bytes && played + n < total; i++) {
+      pcm[n++] = decoder.next(data[used + i] & 15);
+      if (played + n < total) pcm[n++] = decoder.next(data[used + i] >> 4);
+    }
+    used += bytes;
+    playMono(pcm, n);
+    played += n;
+  }
+  i2s_zero_dma_buffer(I2S_NUM_0);
+  free(data);
+  http.end();
+  logLine("said %.1f s (%d bytes, %u ms, %u waits)", played / (float)rate, size,
+          (unsigned)(millis() - started), (unsigned)underruns);
+  return played > 0;
+}
+
+bool playSpeechWav(const String &path) {  // the plain WAV route (not used by default)
   if (!speakerReady) return false;
   HTTPClient http;
   WiFiClientSecure secure;
@@ -182,21 +288,60 @@ void startTalking() {
     return;
   }
   talking = talkedThisPress = true;
+  handsFree = heardSpeech = false;
   talkSamples = 0;
+  noiseLevel = peakLevel = 0;
   tone(880, 70);  // "listening"
   i2s_start(I2S_NUM_1);
-  talkStartMs = millis();
+  talkStartMs = lastLoudMs = millis();
   logLine("listening");
 }
+
+void finishTalking();
 
 void readMic() {
   int32_t raw[256];
   size_t got = 0;
   i2s_read(I2S_NUM_1, raw, sizeof(raw), &got, 20 / portTICK_PERIOD_MS);
-  for (size_t i = 0; i < got / 4 && talkSamples < TALK_MAX_SAMPLES; i++) {
-    int32_t v = raw[i] >> 13;
-    talkBuf[talkSamples++] = (int16_t)constrain(v, -32768, 32767);
+  size_t n = got / 4;
+  int64_t energy = 0;
+  for (size_t i = 0; i < n && talkSamples < TALK_MAX_SAMPLES; i++) {
+    int32_t v = constrain(raw[i] >> 13, -32768, 32767);
+    talkBuf[talkSamples++] = (int16_t)v;
+    energy += (int64_t)v * v;
   }
+  if (talkSamples >= TALK_MAX_SAMPLES) {
+    finishTalking();
+    return;
+  }
+  if (n == 0) return;
+  int32_t level = (int32_t)sqrtf((float)(energy / (int64_t)n));
+  uint32_t now = millis();
+  if (now - talkStartMs < 250) {  // the first moments set the room's noise level
+    noiseLevel = max(noiseLevel, level);
+    return;
+  }
+  peakLevel = max(peakLevel, level);
+  if (level > max(noiseLevel * 3, (int32_t)500)) {
+    heardSpeech = true;
+    lastLoudMs = now;
+  }
+  if (handsFree) {  // released early: end on quiet after speech, or if nobody speaks
+    if ((heardSpeech && now - lastLoudMs > QUIET_END_MS) ||
+        (!heardSpeech && now - talkStartMs > NO_SPEECH_MS)) {
+      finishTalking();
+    }
+  }
+}
+
+// Button released while listening: a quick release keeps listening hands-free.
+void releaseTalking() {
+  if (millis() - talkStartMs < HANDS_FREE_MS) {
+    handsFree = true;
+    logLine("hands-free: listening until you stop talking");
+    return;
+  }
+  finishTalking();
 }
 
 void putLE(uint8_t *p, uint32_t v, int bytes) {
@@ -248,9 +393,12 @@ void sendVoice(const int16_t *samples, size_t count) {
 }
 
 void finishTalking() {
-  talking = false;
+  if (!talking) return;
+  talking = handsFree = false;
   i2s_stop(I2S_NUM_1);
   float seconds = talkSamples / (float)MIC_RATE;
+  logLine("recorded %.1f s, mic level: room %d, loudest %d", seconds, (int)noiseLevel,
+          (int)peakLevel);
   // Drop the first 100 ms (button click and mic start-up).
   size_t skip = min(talkSamples, (size_t)(MIC_RATE / 10));
   if (seconds < 0.6f) {
