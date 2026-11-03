@@ -363,6 +363,9 @@ export const api = {
   setClock: (update: ClockUpdate, appToken: string) =>
     postJson<ClockState>('/api/clock', update, appToken),
   runWatch: (appToken: string) => postJson<WatchFinding[]>('/api/watch/run', {}, appToken),
+  firmware: () => getJson<{ version: string; size: number; md5: string } | null>('/api/firmware'),
+  updateDevice: (deviceId: string, version: string, appToken: string) =>
+    postJson<unknown>(`/api/device/${encodeURIComponent(deviceId)}/update`, { version }, appToken),
   carbon: (hours = 24) => getJson<CarbonView>('/api/carbon', { hours: String(hours) }),
   brief: () => getJson<GridBrief>('/api/brief'),
   computePlan: (request: ComputeRequest) => postJson<ComputePlan>('/api/compute/plan', request, ''),

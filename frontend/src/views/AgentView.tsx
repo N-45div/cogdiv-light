@@ -76,7 +76,7 @@ export function AgentView() {
       <div className="grid-2">
         <RunsCard runs={runs.data} error={runs.error} />
         <div>
-          <DevicesCard devices={devices.data} />
+          <DevicesCard devices={devices.data} token={token} />
           <WatchCard findings={watch.data} />
         </div>
       </div>
@@ -434,9 +434,23 @@ function RunLoader(props: { id: string }) {
   return run.data ? <RunDetail run={run.data} /> : <p className="hint">Loading…</p>
 }
 
-function DevicesCard(props: { devices?: DeviceSummary[] }) {
+function DevicesCard(props: { devices?: DeviceSummary[]; token: string }) {
+  const firmware = useLoad(api.firmware, 'firmware')
+  const [note, setNote] = useState<string>()
+  const offer = async (deviceId: string, version: string) => {
+    setNote(undefined)
+    try {
+      await api.updateDevice(deviceId, version, props.token)
+      setNote(`Offered firmware ${version} to ${deviceId}: it installs on its next poll (about 30 s).`)
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      setNote(message.startsWith('401') ? 'Wrong or missing app token (set it under Clock & demo).' : message)
+    }
+  }
+  const latest = firmware.data?.version
   return (
     <Card title="Devices" subtitle="ESP32 boards polling the server.">
+      {note && <Notice>{note}</Notice>}
       {props.devices?.length === 0 && <p className="hint">No device has polled yet.</p>}
       {props.devices?.map((d) => (
         <div key={d.device_id} className="device">
@@ -449,6 +463,11 @@ function DevicesCard(props: { devices?: DeviceSummary[] }) {
             {typeof d.telemetry.rssi === 'number' && <span>Wi-Fi {d.telemetry.rssi} dBm</span>}
             {typeof d.telemetry.firmware === 'string' && <span>firmware {d.telemetry.firmware}</span>}
             {d.update_to && <span className="badge warn">updating to {d.update_to}</span>}
+            {latest && !d.update_to && typeof d.telemetry.firmware === 'string' && d.telemetry.firmware !== latest && (
+              <button className="button" onClick={() => offer(d.device_id, latest)}>
+                Install firmware {latest}
+              </button>
+            )}
           </div>
           <ul className="events">
             {d.events.slice(0, 5).map((e, i) => (
