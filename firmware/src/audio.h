@@ -28,7 +28,10 @@ int16_t *talkBuf = nullptr;
 size_t talkSamples = 0;
 int lastSayId = -2;  // -2: no poll yet (don't replay old speech after a restart)
 
-void setupAudio() {
+uint32_t speakerRate = 0;
+uint32_t speakerStalls = 0;
+
+bool installSpeaker() {
   i2s_config_t spk = {};
   spk.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
   spk.sample_rate = 22050;
@@ -44,8 +47,25 @@ void setupAudio() {
   spkPins.ws_io_num = PIN_SPK_LRCK;
   spkPins.data_out_num = PIN_SPK_DIN;
   spkPins.data_in_num = I2S_PIN_NO_CHANGE;
-  speakerReady = i2s_driver_install(I2S_NUM_0, &spk, 0, nullptr) == ESP_OK &&
-                 i2s_set_pin(I2S_NUM_0, &spkPins) == ESP_OK;
+  speakerRate = spk.sample_rate;
+  return i2s_driver_install(I2S_NUM_0, &spk, 0, nullptr) == ESP_OK &&
+         i2s_set_pin(I2S_NUM_0, &spkPins) == ESP_OK;
+}
+
+// The legacy I2S driver restarts the peripheral on every i2s_set_clk: only do it on a change.
+void setSpeakerRate(uint32_t rate) {
+  if (rate == speakerRate) return;
+  i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+  speakerRate = rate;
+}
+
+void restartSpeaker() {
+  i2s_driver_uninstall(I2S_NUM_0);
+  speakerReady = installSpeaker();
+}
+
+void setupAudio() {
+  speakerReady = installSpeaker();
 
   i2s_config_t mic = {};
   mic.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
@@ -77,8 +97,15 @@ void playMono(const int16_t *samples, size_t count) {
       int16_t v = (int16_t)(samples[i + j] * VOLUME);
       stereo[2 * j] = stereo[2 * j + 1] = v;
     }
-    size_t written;
-    i2s_write(I2S_NUM_0, stereo, n * 4, &written, portMAX_DELAY);
+    size_t written = 0;
+    // Never wait forever: a wedged driver would hang the whole board.
+    i2s_write(I2S_NUM_0, stereo, n * 4, &written, 300 / portTICK_PERIOD_MS);
+    if (written < n * 4) {
+      speakerStalls++;
+      logLine("speaker stalled (%u): restarting it", (unsigned)speakerStalls);
+      restartSpeaker();
+      return;
+    }
     i += n;
   }
 }
@@ -86,7 +113,7 @@ void playMono(const int16_t *samples, size_t count) {
 void tone(int freq, int ms) {
   if (!speakerReady) return;
   const int rate = 16000;
-  i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+  setSpeakerRate(rate);
   int16_t buf[256];
   int total = rate * ms / 1000;
   for (int done = 0; done < total;) {
@@ -189,7 +216,7 @@ bool playSpeech(const String &path) {
   }
   uint32_t rate = data[4] | (data[5] << 8) | (data[6] << 16) | ((uint32_t)data[7] << 24);
   uint32_t total = data[8] | (data[9] << 8) | (data[10] << 16) | ((uint32_t)data[11] << 24);
-  i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+  setSpeakerRate(rate);
   Adpcm decoder;
   int16_t pcm[512];
   uint32_t played = 0, underruns = 0;
@@ -257,7 +284,7 @@ bool playSpeechWav(const String &path) {  // the plain WAV route (not used by de
   }
   uint32_t rate = clip[24] | (clip[25] << 8) | (clip[26] << 16) | ((uint32_t)clip[27] << 24);
   size_t samples = (size - 44) / 2;
-  i2s_set_clk(I2S_NUM_0, rate, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO);
+  setSpeakerRate(rate);
   playMono((const int16_t *)(clip + 44), samples);
   i2s_zero_dma_buffer(I2S_NUM_0);
   free(clip);

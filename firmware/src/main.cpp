@@ -97,7 +97,8 @@ void logLine(const char *fmt, ...) {
   vsnprintf(text, sizeof(text), fmt, args);
   va_end(args);
   String line = String("[") + (millis() / 1000) + "s] " + text;
-  Serial.println(line);
+  // Not printed to USB serial: with no app reading it, writes can stall the board. The log
+  // goes to the server (GET /api/device/{id}/logs).
   if (logCount == LOG_KEEP) {  // full: drop the oldest
     logStart = (logStart + 1) % LOG_KEEP;
     logCount--;
@@ -119,6 +120,18 @@ void dropLogs(int sent) {  // the server has these now
 }
 
 // ---- relay and LED ---------------------------------------------------------------------------
+
+// ---- watchdog ------------------------------------------------------------------------------
+// If the main loop stops for 3 minutes (a blocked call), restart: better than a frozen board.
+static const uint32_t LOOP_STUCK_MS = 3UL * 60UL * 1000UL;
+volatile uint32_t loopAliveMs = 0;
+
+void watchdogTask(void *) {
+  for (;;) {
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+    if (millis() - loopAliveMs > LOOP_STUCK_MS) ESP.restart();
+  }
+}
 
 void setRelay(bool on) {
   relayState = on;
@@ -221,6 +234,7 @@ bool shouldSave = false;
 
 void connectWifi(bool forcePortal) {
   WiFiManager wm;
+  wm.setDebugOutput(false);  // no USB serial output (see logLine)
   char rotation[2] = {char('0' + settings.rotation), 0};
   WiFiManagerParameter pServer("server", "Server URL (https://...)", settings.server.c_str(), 120);
   WiFiManagerParameter pDevice("device", "Device id (a-z, 0-9, -)", settings.device.c_str(), 32);
@@ -413,6 +427,7 @@ uint32_t retryUpdateAtMs = 0;
 bool skipLogged = false;
 
 void drawProgress(size_t done, size_t total) {
+  loopAliveMs = millis();  // a long download is progress, not a hang
   int width = tft.width() - 16;
   int filled = total ? (int)((uint64_t)width * done / total) : 0;
   tft.fillRect(8, 100, filled, 8, ST77XX_GREEN);
@@ -618,6 +633,8 @@ void setup() {
   pinMode(PIN_TFT_BL, OUTPUT);
   digitalWrite(PIN_TFT_BL, HIGH);
 
+  loopAliveMs = millis();
+  xTaskCreatePinnedToCore(watchdogTask, "watchdog", 2048, nullptr, 1, nullptr, 0);
   loadSettings();
   onTrial = runningOnTrial();
   prefs.begin("windbuddy", true);
@@ -653,6 +670,7 @@ void setup() {
 bool wifiWasDown = false;
 
 void loop() {
+  loopAliveMs = millis();
   readButton();
   if (talking) {  // nothing else while recording: keep the microphone fed
     readMic();
