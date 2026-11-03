@@ -429,6 +429,19 @@ class ProposeRequest(BaseModel):
     run_id: str = Field(description="A verified agent run with a feasible plan")
 
 
+class SayOut(BaseModel):
+    id: int = Field(description="Play this clip once (a new id means new speech)")
+    path: str = Field(description="GET this (with the device token) for the WAV")
+
+
+class VoiceReply(BaseModel):
+    transcript: str = Field(description="What Muse Voice Transcribe heard")
+    answer: str | None = Field(None, description="The agent's fact-checked answer")
+    verified: bool = False
+    proposed: bool = Field(False, description="A plan was sent to the device to approve")
+    run_id: str | None = None
+
+
 class DeviceView(BaseModel):
     device_id: str
     now: str = Field(description="Planning clock, UTC ISO")
@@ -442,6 +455,7 @@ class DeviceView(BaseModel):
     proposal_id: str | None = Field(None, description="Send this back with approve/reject")
     poll_seconds: int
     update: FirmwareOffer | None = Field(None, description="Firmware to install, if requested")
+    say: SayOut | None = Field(None, description="Newest speech clip for the device to play")
 
 
 class DeviceSummary(BaseModel):

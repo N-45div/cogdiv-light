@@ -76,6 +76,10 @@ class DeviceState:
     # Firmware version the device was asked to install; cleared once it reports running it.
     update_to: str | None = None
     logs: deque = field(default_factory=lambda: deque(maxlen=MAX_LOG_LINES))
+    # Speech: sentences waiting to be spoken, what has been announced, and the newest clip.
+    to_say: deque = field(default_factory=lambda: deque(maxlen=5))
+    said: dict = field(default_factory=dict)
+    say: dict | None = None  # {"id": clip id, "text": ...}
 
     def testing(self, real_now: pd.Timestamp) -> bool:
         return self.test_until is not None and real_now < self.test_until
@@ -110,6 +114,40 @@ def effective_relay(state: DeviceState, now: pd.Timestamp, real_now: pd.Timestam
 
 def relay_on(active: Proposal | None, now: pd.Timestamp) -> bool:
     return bool(active) and any(start <= now < end for start, end in active.windows())
+
+
+def _gw_words(mw: float | None) -> str:
+    return "unknown" if mw is None else f"{mw / 1000:.1f} gigawatts"
+
+
+def news(state: DeviceState, now: pd.Timestamp, wind_mw: float | None) -> str | None:
+    """The next thing the device should say, if anything (and mark it said).
+
+    Queued sentences first (button confirmations, voice answers); then a new proposal; then the
+    approved plan switching the load on or off (by the planning clock, so a fast replay is heard
+    too; relay tests are not announced); then a new or cleared watcher alert."""
+    if state.to_say:
+        return state.to_say.popleft()
+    said = state.said
+    if state.proposal and said.get("proposal") != state.proposal.id:
+        said["proposal"] = state.proposal.id
+        p = state.proposal
+        intro = "Better window." if p.title.startswith("Better") else "New charging plan."
+        return f"{intro} {p.answer or ''} Hold the button to approve, or tap to skip."
+    plan_on = relay_on(state.active, now)
+    if plan_on != said.get("relay", False):
+        said["relay"] = plan_on
+        if plan_on:
+            return f"Charging now. Wind is {_gw_words(wind_mw)}."
+        if state.active and not any(s > now for s, _ in state.active.windows()):
+            kwh = sum(w["energy_kwh"] for w in state.active.schedule)
+            return f"Charge done: {kwh:g} kilowatt hours, all in windy hours."
+        return "Charging paused until the next windy window."
+    if state.alert != said.get("alert"):
+        said["alert"] = state.alert
+        if state.alert:
+            return f"Heads up. {state.alert}."
+    return None
 
 
 def screen(
@@ -221,12 +259,19 @@ class DeviceRegistry:
                 if kind == "approve":
                     state.active = pending
                     state.alert = None
+                    starts = [s for s, _ in pending.windows() if s > now]
+                    when = f"Charging starts at {_hhmm(starts[0])}." if starts else ""
+                    state.to_say.append(f"Approved. {when}".strip())
+                else:
+                    state.to_say.append("Okay, plan skipped.")
                 state.changed(f"{PAST[kind]} {pending.id}", now)
             elif kind == "stop":
                 if state.active is not None:
                     state.changed(f"stopped {state.active.id}", now)
                     state.active = None
                     state.alert = None
+                    state.said["relay"] = False
+                    state.to_say.append("Charging stopped.")
             elif kind == "telemetry":
                 state.telemetry = {k: v for k, v in event.items() if k not in ("type", "log")}
                 if state.update_to and state.telemetry.get("firmware") == state.update_to:
@@ -270,6 +315,25 @@ class DeviceRegistry:
             state.update_to = version
             state.changed(f"update to {version} requested" if version else "update cancelled", now)
             return state
+
+    def queue_say(self, device_id: str, text: str) -> None:
+        with self._lock:
+            self._get(device_id).to_say.append(text)
+
+    def next_news(self, device_id: str, now: pd.Timestamp, wind_mw: float | None) -> str | None:
+        with self._lock:
+            return news(self._get(device_id), now, wind_mw)
+
+    def set_say(self, device_id: str, clip_id: int, text: str, now: pd.Timestamp) -> None:
+        with self._lock:
+            state = self._get(device_id)
+            state.say = {"id": clip_id, "text": text}
+            state.events.appendleft({"at": now.isoformat(), "event": f"said: {text[:80]}"})
+
+    def heard(self, device_id: str, transcript: str, now: pd.Timestamp) -> None:
+        with self._lock:
+            event = {"at": now.isoformat(), "event": f"heard: {transcript[:80] or '(nothing)'}"}
+            self._get(device_id).events.appendleft(event)
 
     def seen(self, device_id: str, now: pd.Timestamp) -> DeviceState:
         with self._lock:

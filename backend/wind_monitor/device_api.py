@@ -6,20 +6,27 @@ without it (local development) any device id is accepted.
 
 Remote care: devices send log lines with their events (GET /api/device/{id}/logs), and
 POST /api/device/{id}/update offers them the server's firmware image over the air.
+
+Voice: POST /api/device/{id}/voice takes a push-to-talk WAV, transcribes it (Meta Muse Voice
+Transcribe) and asks the agent; what the device should say is announced on its next poll
+("say" in the state) and downloaded from /api/device/{id}/speech/{clip}.
 """
 
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from typing import Annotated
 
 import pandas as pd
-from fastapi import APIRouter, Depends, Header, HTTPException, Path
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request
+from fastapi.responses import FileResponse, Response
 
 from . import outlook as ol
+from .agent.runner import run_agent
 from .agent.runs import RunLog, get_run_log
+from .agent_api import PlannerDep
 from .config import UK_TZ
 from .device import (
     DeviceError,
@@ -40,8 +47,10 @@ from .schemas import (
     ProposeRequest,
     RelayTest,
     UpdateRequest,
+    VoiceReply,
 )
 from .store import WindData
+from .voice import Voice, VoiceUnavailable, get_voice, wav_info
 
 router = APIRouter(prefix="/api")
 
@@ -50,7 +59,10 @@ DeviceId = Annotated[str, Path(pattern=DEVICE_ID_PATTERN)]
 RegistryDep = Annotated[DeviceRegistry, Depends(get_registry)]
 RunLogDep = Annotated[RunLog, Depends(get_run_log)]
 FirmwareDep = Annotated[FirmwareImage | None, Depends(get_firmware)]
+VoiceDep = Annotated[Voice, Depends(get_voice)]
 SUMMARY_LOG_LINES = 20
+MAX_VOICE_SECONDS = 15
+log = logging.getLogger(__name__)
 
 
 def device_tokens() -> dict[str, str]:
@@ -84,8 +96,27 @@ def offer(state: DeviceState, image: FirmwareImage | None) -> dict | None:
     }
 
 
+def announce(
+    registry: DeviceRegistry, device_id: str, now, data: WindData, voice: Voice | None
+) -> None:
+    """Turn the device's next piece of news into a speech clip (one per poll)."""
+    if voice is None or not voice.can_speak():
+        return
+    latest = ol.latest_actual(data, now)
+    text = registry.next_news(device_id, now, latest["actual_mw"] if latest else None)
+    if not text:
+        return
+    try:
+        clip = voice.speak(text)
+    except Exception as exc:  # speech must never break the device's poll
+        log.warning("Could not synthesize speech: %s", exc)
+        return
+    registry.set_say(device_id, clip.id, text, now)
+
+
 def view(state: DeviceState, now, data: WindData, image: FirmwareImage | None = None) -> dict:
     real_now = pd.Timestamp.now(tz="UTC")
+    say = state.say
     return {
         "device_id": state.device_id,
         "now": now.isoformat(),
@@ -95,6 +126,9 @@ def view(state: DeviceState, now, data: WindData, image: FirmwareImage | None = 
         "proposal_id": state.proposal.id if state.proposal else None,
         "poll_seconds": POLL_SECONDS,
         "update": offer(state, image),
+        "say": None
+        if say is None
+        else {"id": say["id"], "path": f"/api/device/{state.device_id}/speech/{say['id']}"},
         **screen(state, now, ol.latest_actual(data, now), real_now),
     }
 
@@ -106,9 +140,12 @@ def device_state(
     data: PlanningDataDep,
     registry: RegistryDep,
     image: FirmwareDep,
+    voice: VoiceDep,
 ) -> dict:
-    """What the device should show, and whether its load should be on right now."""
+    """What the device should show and say, and whether its load should be on right now."""
     now = clock.now()
+    registry.seen(device_id, now)
+    announce(registry, device_id, now, data, voice)
     return view(registry.seen(device_id, now), now, data, image)
 
 
@@ -120,6 +157,7 @@ def device_event(
     data: PlanningDataDep,
     registry: RegistryDep,
     image: FirmwareDep,
+    voice: VoiceDep,
 ) -> dict:
     """A button press (approve / reject / stop) or telemetry from the device, with any log
     lines it has collected since its last event."""
@@ -128,7 +166,65 @@ def device_event(
         state = registry.event(device_id, event.model_dump(exclude_none=True), now)
     except DeviceError as exc:
         raise HTTPException(409, str(exc)) from exc
+    if event.type != "telemetry":
+        announce(registry, device_id, now, data, voice)  # confirm the press out loud
     return view(state, now, data, image)
+
+
+@router.post("/device/{device_id}/voice", response_model=VoiceReply)
+async def device_voice(
+    device_id: AuthorisedDevice,
+    request: Request,
+    clock: ClockDep,
+    data: PlanningDataDep,
+    registry: RegistryDep,
+    voice: VoiceDep,
+    planner: PlannerDep,
+    log_: RunLogDep,
+) -> dict:
+    """Push-to-talk: a WAV (16 kHz mono 16-bit) in the request body. It is transcribed with
+    Meta Muse Voice Transcribe and sent to the agent; a verified plan is proposed to this
+    device (and read out on its next poll), otherwise the answer is read out."""
+    audio = await request.body()
+    try:
+        rate, channels, bits, seconds = wav_info(audio)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if (rate, channels, bits) not in ((16000, 1, 16), (24000, 1, 16)):
+        raise HTTPException(400, "Send 16 or 24 kHz mono 16-bit WAV")
+    if seconds > MAX_VOICE_SECONDS:
+        raise HTTPException(413, f"At most {MAX_VOICE_SECONDS} s of speech")
+    now = clock.now()
+    try:
+        transcript = voice.transcriber.transcribe(audio)
+    except VoiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    registry.heard(device_id, transcript, now)
+    reply = {"transcript": transcript, "answer": None, "verified": False, "proposed": False}
+    if len(transcript) < 3:
+        registry.queue_say(device_id, "Sorry, I didn't catch that. Hold the button and try again.")
+        return reply
+    if not planner.available():
+        registry.queue_say(device_id, "Sorry, no planning model is set up on the server.")
+        return reply
+    run = run_agent(transcript, data, now, planner, mode=clock.mode)
+    log_.add(run)
+    reply.update(answer=run.answer, verified=run.verified, run_id=run.id)
+    try:
+        registry.propose(device_id, run, now)  # read out with "hold to approve" on next poll
+        reply["proposed"] = True
+    except ValueError:
+        registry.queue_say(device_id, run.answer or "Sorry, I couldn't work that out.")
+    return reply
+
+
+@router.get("/device/{device_id}/speech/{clip_id}")
+def device_speech(device_id: AuthorisedDevice, clip_id: int, voice: VoiceDep) -> Response:
+    """A speech clip for the device to play (WAV)."""
+    clip = voice.clip(clip_id)
+    if clip is None:
+        raise HTTPException(404, "No such clip (the server keeps the newest few)")
+    return Response(clip.wav, media_type="audio/wav")
 
 
 @router.post(
