@@ -9,6 +9,7 @@ switches the load.
 
 - **Live site:** https://ndivij2004--wind-buddy-web.us-east.modal.run (console at
   [/app/](https://ndivij2004--wind-buddy-web.us-east.modal.run/app/))
+- **Demo video (3 min):** https://youtu.be/3snBSRIebQQ
 - **Built for** the Meta Global AI Developer Hackathon 2026 (Indie track), from 27 Oct 2026.
   Everything Wind Buddy (agent, fact checker, board firmware, voice, watcher, carbon and compute
   planning) was built during the hackathon. It sits on an earlier January 2026 wind-forecast
