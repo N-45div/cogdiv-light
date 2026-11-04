@@ -47,7 +47,7 @@ def test_parse_and_job_defaults():
         "baseten:x",
         "meta:y",
     ]
-    for bad in ("muse-spark-1.3", "openai:gpt", "meta:"):
+    for bad in ("muse-spark-1.3", "acme:gpt", "meta:"):
         with pytest.raises(ValueError):
             ModelRef.parse(bad)
 
@@ -142,6 +142,47 @@ def test_reasoning_effort_goes_only_to_providers_that_accept_it():
     ChatClient(models, env, http=http, reasoning_effort="low").chat([])
     assert json.loads(seen[0].content)["reasoning_effort"] == "low"  # meta
     assert "reasoning_effort" not in json.loads(seen[1].content)  # our Glimmer server
+
+
+def test_openai_goes_through_the_responses_api_and_back():
+    """Same messages and tools in, a Chat Completions-style message out."""
+    reply = {
+        "output": [
+            {"type": "reasoning", "summary": []},
+            {"type": "function_call", "call_id": "c1", "name": "plan_charge", "arguments": "{}"},
+            {"type": "message", "content": [{"type": "output_text", "text": "Charge 01:00"}]},
+        ],
+        "usage": {"total_tokens": 9},
+    }
+    client, seen = _client(
+        lambda r: httpx.Response(200, json=reply),
+        env={"OPENAI_API_KEY": "k"},
+        models=[ModelRef("openai", "gpt-x")],
+    )
+    client.reasoning_effort = "low"
+    tool = {"type": "function", "function": {"name": "plan_charge", "parameters": {}}}
+    call = {"id": "c0", "type": "function", "function": {"name": "get_outlook", "arguments": "{}"}}
+    messages = [
+        {"role": "system", "content": "rules"},
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "c0", "content": "[]"},
+    ]
+    result = client.chat(messages, tools=[tool])
+
+    assert str(seen[0].url) == "https://api.openai.com/v1/responses"
+    body = json.loads(seen[0].content)
+    assert body["reasoning"] == {"effort": "low"} and body["store"] is False
+    assert body["tools"] == [
+        {"type": "function", "strict": False, "name": "plan_charge", "parameters": {}}
+    ]
+    assert body["input"] == [
+        {"role": "system", "content": "rules"},
+        {"type": "function_call", "call_id": "c0", "name": "get_outlook", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c0", "output": "[]"},
+    ]
+    assert result.message["content"] == "Charge 01:00"
+    assert result.message["tool_calls"][0]["id"] == "c1"
+    assert result.usage == {"total_tokens": 9}
 
 
 def test_jobs_default_to_low_reasoning_effort():

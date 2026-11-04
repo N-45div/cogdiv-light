@@ -1,7 +1,9 @@
 """One chat client for every model provider we use.
 
 Meta Model API, Baseten, Fireworks and our own vLLM server on Modal all speak the OpenAI-style
-Chat Completions API, so a provider is just a base URL and a key. Each job ("planner",
+Chat Completions API, so a provider is just a base URL and a key. OpenAI's own newest models
+only call tools while reasoning through its Responses API, so for OpenAI the same messages and
+tools are translated to that API and back. Each job ("planner",
 "watcher") has an ordered list of models, written `provider:model`. The first one whose key is
 set answers; if it fails (network error, rate limit, server error) the next one is tried.
 Every answer records which model gave it, so the agent log shows exactly who decided what.
@@ -26,6 +28,8 @@ class Provider:
     url_env: str | None = None
     # Accepts the `reasoning_effort` request field (tested against the real API).
     reasoning_effort: bool = False
+    # "chat" (Chat Completions) or "responses" (OpenAI's Responses API).
+    api: str = "chat"
 
     def url(self, env: Mapping[str, str]) -> str:
         return (env.get(self.url_env) if self.url_env else None) or self.base_url
@@ -39,6 +43,14 @@ PROVIDERS = {
             "baseten", "https://inference.baseten.co/v1", "BASETEN_API_KEY", reasoning_effort=True
         ),
         Provider("fireworks", "https://api.fireworks.ai/inference/v1", "FIREWORKS_API_KEY"),
+        # For comparison runs only (scripts/agent_eval.py); not in any default model list.
+        Provider(
+            "openai",
+            "https://api.openai.com/v1",
+            "OPENAI_API_KEY",
+            reasoning_effort=True,
+            api="responses",
+        ),
         # Muse Glimmer served by vLLM on Modal: the URL comes from the deployment.
         Provider("modal", "", "MODAL_GLIMMER_KEY", url_env="MODAL_GLIMMER_URL"),
     )
@@ -125,15 +137,21 @@ class ChatClient:
         failed: list[dict] = []
         for ref in available:
             provider = PROVIDERS[ref.provider]
-            body = {"model": ref.model, "messages": messages, **params}
-            if self.reasoning_effort and provider.reasoning_effort:
-                body.setdefault("reasoning_effort", self.reasoning_effort)
-            if tools:
-                body["tools"] = tools
+            effort = self.reasoning_effort if provider.reasoning_effort else None
+            if provider.api == "responses":
+                path = "responses"
+                body = responses_request(ref.model, messages, tools, effort, params)
+            else:
+                path = "chat/completions"
+                body = {"model": ref.model, "messages": messages, **params}
+                if effort:
+                    body.setdefault("reasoning_effort", effort)
+                if tools:
+                    body["tools"] = tools
             start = time.monotonic()
             try:
                 response = self._http.post(
-                    f"{provider.url(self._env).rstrip('/')}/chat/completions",
+                    f"{provider.url(self._env).rstrip('/')}/{path}",
                     json=body,
                     headers={"Authorization": f"Bearer {self._env[provider.key_env]}"},
                 )
@@ -147,12 +165,65 @@ class ChatClient:
                 continue
             try:
                 payload = response.json()
-                message = payload["choices"][0]["message"]
+                if provider.api == "responses":
+                    message = responses_message(payload)
+                else:
+                    message = payload["choices"][0]["message"]
             except (ValueError, KeyError, IndexError, TypeError):
                 failed.append({"model": str(ref), "error": "unexpected response body"})
                 continue
             return ChatResult(message, str(ref), seconds, payload.get("usage"), failed)
         raise ModelUnavailableError("Every configured model failed", failed)
+
+
+def responses_request(
+    model: str, messages: list[dict], tools: list[dict] | None, effort: str | None, params: dict
+) -> dict:
+    """A Chat Completions request (messages, tools) as a Responses API request."""
+    items: list[dict] = []
+    for m in messages:
+        if m["role"] == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": m["tool_call_id"],
+                    "output": m["content"],
+                }
+            )
+            continue
+        if m.get("content"):
+            items.append({"role": m["role"], "content": m["content"]})
+        for call in m.get("tool_calls") or []:
+            function = call["function"]
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": call["id"],
+                    "name": function["name"],
+                    "arguments": function["arguments"],
+                }
+            )
+    body = {"model": model, "input": items, "store": False, **params}
+    if effort:
+        body["reasoning"] = {"effort": effort}
+    if tools:
+        body["tools"] = [{"type": "function", "strict": False, **t["function"]} for t in tools]
+    return body
+
+
+def responses_message(payload: dict) -> dict:
+    """A Responses API reply as a Chat Completions assistant message."""
+    text, calls = [], []
+    for item in payload["output"]:
+        if item.get("type") == "message":
+            text += [p["text"] for p in item.get("content", []) if p.get("type") == "output_text"]
+        elif item.get("type") == "function_call":
+            function = {"name": item["name"], "arguments": item["arguments"]}
+            calls.append({"id": item["call_id"], "type": "function", "function": function})
+    message: dict = {"role": "assistant", "content": "".join(text) or None}
+    if calls:
+        message["tool_calls"] = calls
+    return message
 
 
 def client_for(job: str, env: Mapping[str, str] = os.environ, **kwargs) -> ChatClient:
