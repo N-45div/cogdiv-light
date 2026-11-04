@@ -53,6 +53,34 @@ Not Meta: the board's voice is [Piper](https://github.com/rhasspy/piper) (open s
 speech, on our server), because Meta's API has no text to speech yet. The fact checker is plain
 code: models propose, code verifies. 27 of 27 test nights passed on both Muse Spark models.
 
+### The same test on other models
+
+`backend/scripts/agent_eval.py` asks the real agent to plan a 21 kWh charge on 27 January
+nights, in three wordings, and scores every answer. Every model gets the same prompt, tools,
+fact check and reasoning effort ("low").
+
+| Model | Provider | Verified | Needed a rewrite | Right plan | Median time |
+|---|---|---|---|---|---|
+| **Muse Spark 1.3** | Meta Model API | 27/27 | 0/27 | 27/27 | 4.0 s |
+| **Muse Spark Open** | Baseten | 27/27 | 0/27 | 27/27 | 2.4 s |
+| gpt-6.1-sol | OpenAI | 27/27 | 0/27 | 27/27 | 4.6 s |
+| gpt-6.1-terra | OpenAI | 27/27 | 0/27 | 27/27 | 3.0 s |
+| gpt-6-astra | OpenAI | 27/27 | 0/27 | 27/27 | 4.9 s |
+| gpt-6-sol | OpenAI | 27/27 | 0/27 | 27/27 | 2.5 s |
+| gpt-5.5 | OpenAI | 27/27 | 0/27 | 27/27 | 3.0 s |
+
+- Every model got every night right. With tools that do the maths and a fact checker on every
+  answer, the choice comes down to speed, cost and hosting. Muse Spark Open, which has open
+  weights, was as fast as the fastest OpenAI model.
+- Meta's API (and Baseten) take tool calls with reasoning on the same Chat Completions request.
+  OpenAI's newest models need its Responses API for that: Chat Completions rejects tools unless
+  reasoning is off, and gpt-6-astra and gpt-6.1-sol can't turn it off. So the `openai` provider
+  translates to that API ([llm.py](backend/wind_monitor/agent/llm.py)).
+- Muse Spark was measured on 30 Oct 2026 and OpenAI on 4 Nov 2026, from different machines, so
+  treat small time differences as noise. OpenAI is for comparison only and is in no default
+  model list.
+- Run it: `OPENAI_API_KEY=... python backend/scripts/agent_eval.py --models openai:gpt-6-sol`
+
 ### Data
 
 - **Wind:** Elexon BMRS
